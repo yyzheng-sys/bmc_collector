@@ -1,4 +1,4 @@
-# BMC硬件信息采集工具使用说明
+﻿# BMC硬件信息采集工具使用说明
 
 ## 工具简介
 
@@ -45,9 +45,7 @@ pip install paramiko requests pandas openpyxl
 打开 `devices.txt` 文件，修改为您的设备信息。文件格式如下：
 
 ```
-70.189.131.92 FDuser Fusion@1234#$
-70.189.131.153 FDuser Fusion@1235#$
-70.189.131.213 FDuser Fusion@1236#$
+192.168.x.x Administrator Admin@9000 
 ```
 
 **配置说明**：
@@ -92,14 +90,14 @@ Excel文件采用组合布局，每行按索引顺序组合CPU、内存和硬盘
 **示例**：
 ```
 IP地址          产品序列号         主板序列号      机箱序列号  CPU制造商              CPU型号                          CPU序列号         内存制造商  内存序列号  内存容量  硬盘制造商  硬盘序列号         硬盘容量
-70.189.131.92   02Y054X6P4000014  XD2331001430   N/A         Intel(R) Corporation  Intel(R) Xeon(R) Platinum 8450H  CAECD9BEB1D618  Micron      3EA92C58   32768 MB  Samsung     S63UNG0T324738  3.493 TB
-70.189.131.92   02Y054X6P4000014  XD2331001430   N/A         Intel(R) Corporation  Intel(R) Xeon(R) Platinum 8450H  CABDC32A9D92C30A  Micron      3EA967D9   32768 MB  Samsung     S63UNG0T324719  3.493 TB
-70.189.131.92   02Y054X6P4000014  XD2331001430   N/A                                                                 Micron      3EA967D7   32768 MB
-70.189.131.92   02Y054X6P4000014  XD2331001430   N/A                                                                 Micron      3EA96948   32768 MB
-70.189.131.92   02Y054X6P4000014  XD2331001430   N/A                                                                 Micron      3EA92C87   32768 MB
-70.189.131.92   02Y054X6P4000014  XD2331001430   N/A                                                                 Micron      3EA92C45   32768 MB
-70.189.131.92   02Y054X6P4000014  XD2331001430   N/A                                                                 Micron      3EA92C37   32768 MB
-70.189.131.92   02Y054X6P4000014  XD2331001430   N/A                                                                 Micron      3EA91A8B   32768 MB
+192.168.x.x   02Y054X6P4000014  XD2331001430   N/A         Intel(R) Corporation  Intel(R) Xeon(R) Platinum 8450H  CAECD9BEB1D618  Micron      3EA92C58   32768 MB  Samsung     S63UNG0T324738  3.493 TB
+192.168.x.x   02Y054X6P4000014  XD2331001430   N/A         Intel(R) Corporation  Intel(R) Xeon(R) Platinum 8450H  CABDC32A9D92C30A  Micron      3EA967D9   32768 MB  Samsung     S63UNG0T324719  3.493 TB
+192.168.x.x   02Y054X6P4000014  XD2331001430   N/A                                                                 Micron      3EA967D7   32768 MB
+192.168.x.x   02Y054X6P4000014  XD2331001430   N/A                                                                 Micron      3EA96948   32768 MB
+192.168.x.x   02Y054X6P4000014  XD2331001430   N/A                                                                 Micron      3EA92C87   32768 MB
+192.168.x.x   02Y054X6P4000014  XD2331001430   N/A                                                                 Micron      3EA92C45   32768 MB
+192.168.x.x   02Y054X6P4000014  XD2331001430   N/A                                                                 Micron      3EA92C37   32768 MB
+192.168.x.x   02Y054X6P4000014  XD2331001430   N/A                                                                 Micron      3EA91A8B   32768 MB
 ```
 
 ## 工作原理
@@ -140,7 +138,7 @@ IP地址          产品序列号         主板序列号      机箱序列号  
 
 ## 测试结果
 
-已成功测试设备：70.189.131.92
+已成功测试设备：192.168.x.x
 
 采集到的信息：
 - 产品序列号: 02Y054X6P4000014
