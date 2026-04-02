@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.venv/
+venv/
+
+# Runtime logs
+*.log
+
+# Local database and secrets
+bmc_platform.db
+.encryption_key
+
+# Sensitive device source files
+devices.txt
+init_devices.py
+提示词.txt
+OS&SDK*.xlsx
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,3 +1,0 @@
-﻿# IP 账户 密码 
-## 蓝区
-192.168.x.x Administrator Admin@9000 

@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>机房资产管理平台</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="bg-shape bg-shape-1"></div>
+<div class="bg-shape bg-shape-2"></div>
+
+<header class="app-header">
+    <div>
+        <h1>机房资产管理平台</h1>
+        <p class="subtitle">SN 盘点优先，支持 BMC + OS 双通道采集</p>
+    </div>
+    <div class="header-actions">
+        <input id="searchInput" class="search-input" placeholder="搜索设备SN/BMC IP/资产编码/物料SN/槽位/型号">
+        <button class="btn btn-primary" onclick="showAddDeviceModal()">新增设备</button>
+        <button class="btn" onclick="showBatchAddModal()">批量新增</button>
+        <button class="btn btn-danger" onclick="batchDeleteDevices()">批量删除</button>
+        <button class="btn btn-success" onclick="collectAll()">全量采集</button>
+        <div class="dropdown">
+            <button class="btn btn-info">导出</button>
+            <div class="dropdown-content">
+                <a href="/api/export/devices">导出设备列表</a>
+                <a href="/api/export/components">导出全部物料</a>
+            </div>
+        </div>
+    </div>
+</header>
+
+<main class="main-container">
+    <section class="panel">
+        <div class="panel-header">
+            <h2>设备总览 <span id="deviceCount" class="badge">0</span></h2>
+            <div class="hint">提示：勾选左侧复选框可批量删除</div>
+        </div>
+        <div class="table-wrap">
+            <table class="data-table" id="deviceTable">
+                <thead>
+                <tr>
+                    <th><input type="checkbox" id="selectAll" onclick="toggleSelectAll()"></th>
+                    <th class="sortable" onclick="toggleSort('id')">序号<span class="sort-flag">↕</span></th>
+                    <th class="sortable" onclick="toggleSort('server_model')">机型<span class="sort-flag">↕</span></th>
+                    <th class="sortable" onclick="toggleSort('server_version')">版本<span class="sort-flag">↕</span></th>
+                    <th class="sortable" onclick="toggleSort('asset_code')">资产编码<span class="sort-flag">↕</span></th>
+                    <th class="sortable" onclick="toggleSort('sn')">设备SN<span class="sort-flag">↕</span></th>
+                    <th class="sortable" onclick="toggleSort('bmc_ip')">BMC IP<span class="sort-flag">↕</span></th>
+                    <th class="sortable" onclick="toggleSort('bmc_username')">BMC账号<span class="sort-flag">↕</span></th>
+                    <th class="sortable" onclick="toggleSort('bmc_password')">BMC密码<span class="sort-flag">↕</span></th>
+                    <th class="sortable" onclick="toggleSort('os_ip')">OS IP<span class="sort-flag">↕</span></th>
+                    <th class="sortable" onclick="toggleSort('os_username')">OS账号<span class="sort-flag">↕</span></th>
+                    <th class="sortable" onclick="toggleSort('os_password')">OS密码<span class="sort-flag">↕</span></th>
+                    <th class="sortable" onclick="toggleSort('asset_status')">整机状态<span class="sort-flag">↕</span></th>
+                    <th class="sortable" onclick="toggleSort('status')">采集状态<span class="sort-flag">↕</span></th>
+                    <th class="sortable" onclick="toggleSort('component_count')">物料数<span class="sort-flag">↕</span></th>
+                    <th class="sortable" onclick="toggleSort('last_collected')">上次采集<span class="sort-flag">↕</span></th>
+                    <th>操作</th>
+                </tr>
+                </thead>
+                <tbody id="deviceTableBody"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <div class="modal-overlay" id="componentModal" style="display:none;" onclick="if(event.target===this)hideComponentModal()">
+        <div class="modal modal-xl">
+            <div class="modal-header">
+                <h3>
+                    <span id="compDeviceInfo"></span>
+                    <span id="compCount" class="badge">0</span>
+                </h3>
+                <div class="inline-actions">
+                    <button class="btn btn-sm" onclick="showAddComponentModal()">新增手动物料</button>
+                    <button class="btn btn-sm btn-info" onclick="exportSingleDevice()">导出本机物料</button>
+                    <button class="btn-close" onclick="hideComponentModal()">✕</button>
+                </div>
+            </div>
+            <div id="componentGroups" class="component-groups"></div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="deviceModal" style="display:none;" onclick="if(event.target===this)closeDeviceModal()">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="deviceModalTitle">新增设备</h3>
+                <button class="btn-close" onclick="closeDeviceModal()">✕</button>
+            </div>
+            <form id="deviceForm" onsubmit="submitDevice(event)">
+                <input type="hidden" id="editDeviceId">
+                <div class="form-grid">
+                    <div class="form-group"><label>服务器机型</label><input id="fServerModel"></div>
+                    <div class="form-group"><label>服务器版本</label><input id="fServerVersion"></div>
+                    <div class="form-group"><label>资产编码</label><input id="fAssetCode"></div>
+                    <div class="form-group"><label>设备SN</label><input id="fSN"></div>
+                    <div class="form-group"><label>BMC IP *</label><input id="fBmcIp" required></div>
+                    <div class="form-group"><label>BMC账号</label><input id="fBmcUser" value="Administrator"></div>
+                    <div class="form-group"><label>BMC密码</label><input id="fBmcPass"></div>
+                    <div class="form-group"><label>OS IP</label><input id="fOsIp"></div>
+                    <div class="form-group"><label>OS账号</label><input id="fOsUser"></div>
+                    <div class="form-group"><label>OS密码</label><input id="fOsPass"></div>
+                    <div class="form-group"><label>整机状态</label>
+                        <select id="fAssetStatus">
+                            <option value="">未设置</option>
+                            <option value="整机挂账">整机挂账</option>
+                            <option value="整机转散件">整机转散件</option>
+                            <option value="散件挂账">散件挂账</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn" onclick="closeDeviceModal()">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="batchAddModal" style="display:none;" onclick="if(event.target===this)closeBatchAddModal()">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>批量新增设备</h3>
+                <button class="btn-close" onclick="closeBatchAddModal()">✕</button>
+            </div>
+            <div class="batch-help">每行一个设备，逗号分隔字段：server_model,server_version,asset_code,sn,bmc_ip,bmc_username,bmc_password,os_ip,os_username,os_password,asset_status</div>
+            <textarea id="batchInput" class="batch-text" placeholder="2288H,V6,ASSET001,SN001,7.6.1.1,Administrator,Pwd123,192.168.1.10,root,Pwd456,整机挂账"></textarea>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeBatchAddModal()">取消</button>
+                <button class="btn btn-primary" onclick="submitBatchAdd()">提交</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="componentEditModal" style="display:none;" onclick="if(event.target===this)closeComponentEditModal()">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="componentModalTitle">新增手动物料</h3>
+                <button class="btn-close" onclick="closeComponentEditModal()">✕</button>
+            </div>
+            <form id="componentForm" onsubmit="submitComponent(event)">
+                <input type="hidden" id="editComponentId">
+                <div class="form-grid">
+                    <div class="form-group"><label>物料类型</label>
+                        <select id="cType" required>
+                            <option value="cpu">CPU</option>
+                            <option value="gpu">GPU</option>
+                            <option value="npu">NPU</option>
+                            <option value="memory">内存</option>
+                            <option value="nic">网卡</option>
+                            <option value="disk">硬盘</option>
+                        </select>
+                    </div>
+                    <div class="form-group"><label>槽位</label><input id="cSlot"></div>
+                    <div class="form-group"><label>制造商</label><input id="cManufacturer"></div>
+                    <div class="form-group"><label>型号</label><input id="cModel"></div>
+                    <div class="form-group"><label>SN</label><input id="cSerial"></div>
+                    <div class="form-group"><label>容量/大小</label><input id="cCapacity"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn" onclick="closeComponentEditModal()">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</main>
+
+<div id="toast" class="toast" style="display:none;"></div>
+
+<script>
+let devices = [];
+let selectedIds = new Set();
+let currentDevice = null;
+let allComponents = [];
+let currentSortField = 'id';
+let currentSortDir = 'asc';
+
+const TYPE_ORDER = ['cpu', 'gpu', 'npu', 'memory', 'nic', 'disk'];
+const TYPE_LABEL = {cpu:'CPU', gpu:'GPU', npu:'NPU', memory:'内存', nic:'网卡', disk:'硬盘'};
+
+function esc(value) {
+    const v = value || '';
+    const div = document.createElement('div');
+    div.textContent = v;
+    return div.innerHTML;
+}
+
+function statusLabel(v) {
+    return {online:'在线', offline:'离线', collecting:'采集中', unknown:'未知'}[v] || v;
+}
+
+function toast(msg, type='success') {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = `toast ${type}`;
+    el.style.display = 'block';
+    setTimeout(() => { el.style.display = 'none'; }, 2600);
+}
+
+function sortIndicator(field) {
+    if (currentSortField !== field) {
+        return '↕';
+    }
+    return currentSortDir === 'asc' ? '↑' : '↓';
+}
+
+function buildDeviceHeader() {
+    return `
+        <tr>
+            <th><input type="checkbox" id="selectAll" onclick="toggleSelectAll()"></th>
+            <th class="sortable" onclick="toggleSort('id')">序号<span class="sort-flag">${sortIndicator('id')}</span></th>
+            <th class="sortable" onclick="toggleSort('server_model')">机型<span class="sort-flag">${sortIndicator('server_model')}</span></th>
+            <th class="sortable" onclick="toggleSort('server_version')">版本<span class="sort-flag">${sortIndicator('server_version')}</span></th>
+            <th class="sortable" onclick="toggleSort('asset_code')">资产编码<span class="sort-flag">${sortIndicator('asset_code')}</span></th>
+            <th class="sortable" onclick="toggleSort('sn')">设备SN<span class="sort-flag">${sortIndicator('sn')}</span></th>
+            <th class="sortable" onclick="toggleSort('bmc_ip')">BMC IP<span class="sort-flag">${sortIndicator('bmc_ip')}</span></th>
+            <th class="sortable" onclick="toggleSort('bmc_username')">BMC账号<span class="sort-flag">${sortIndicator('bmc_username')}</span></th>
+            <th class="sortable" onclick="toggleSort('bmc_password')">BMC密码<span class="sort-flag">${sortIndicator('bmc_password')}</span></th>
+            <th class="sortable" onclick="toggleSort('os_ip')">OS IP<span class="sort-flag">${sortIndicator('os_ip')}</span></th>
+            <th class="sortable" onclick="toggleSort('os_username')">OS账号<span class="sort-flag">${sortIndicator('os_username')}</span></th>
+            <th class="sortable" onclick="toggleSort('os_password')">OS密码<span class="sort-flag">${sortIndicator('os_password')}</span></th>
+            <th class="sortable" onclick="toggleSort('asset_status')">整机状态<span class="sort-flag">${sortIndicator('asset_status')}</span></th>
+            <th class="sortable" onclick="toggleSort('status')">采集状态<span class="sort-flag">${sortIndicator('status')}</span></th>
+            <th class="sortable" onclick="toggleSort('component_count')">物料数<span class="sort-flag">${sortIndicator('component_count')}</span></th>
+            <th class="sortable" onclick="toggleSort('last_collected')">上次采集<span class="sort-flag">${sortIndicator('last_collected')}</span></th>
+            <th>操作</th>
+        </tr>
+    `;
+}
+
+function applySort(items) {
+    const list = [...items];
+    const dir = currentSortDir === 'asc' ? 1 : -1;
+    list.sort((a, b) => {
+        const va = a[currentSortField];
+        const vb = b[currentSortField];
+
+        if (currentSortField === 'id' || currentSortField === 'component_count') {
+            const na = Number(va || 0);
+            const nb = Number(vb || 0);
+            return (na - nb) * dir;
+        }
+
+        if (currentSortField === 'last_collected') {
+            const ta = va ? new Date(va.replace(/-/g, '/')).getTime() : 0;
+            const tb = vb ? new Date(vb.replace(/-/g, '/')).getTime() : 0;
+            return (ta - tb) * dir;
+        }
+
+        return String(va || '').localeCompare(String(vb || ''), 'zh-CN') * dir;
+    });
+    return list;
+}
+
+function toggleSort(field) {
+    if (currentSortField === field) {
+        currentSortDir = currentSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        currentSortField = field;
+        currentSortDir = 'asc';
+    }
+    renderDeviceTable();
+}
+
+async function loadDevices(keyword='') {
+    const url = keyword ? `/api/devices?keyword=${encodeURIComponent(keyword)}` : '/api/devices';
+    const resp = await fetch(url);
+    devices = await resp.json();
+    renderDeviceTable();
+}
+
+function renderDeviceTable() {
+    document.getElementById('deviceCount').textContent = devices.length;
+    document.querySelector('#deviceTable thead').innerHTML = buildDeviceHeader();
+    const tbody = document.getElementById('deviceTableBody');
+
+    if (!devices.length) {
+        tbody.innerHTML = '<tr><td colspan="17" class="empty-msg">暂无设备</td></tr>';
+        return;
+    }
+
+    const sortedDevices = applySort(devices);
+
+    tbody.innerHTML = sortedDevices.map((d, idx) => {
+        const checked = selectedIds.has(d.id) ? 'checked' : '';
+        const matched = (d.matched_components || []).map(c => `${c.type_label}:${c.serial_number || c.model}`).join(' | ');
+        return `
+            <tr class="${currentDevice && currentDevice.id === d.id ? 'active-row' : ''}">
+                <td onclick="event.stopPropagation()"><input type="checkbox" ${checked} onchange="toggleSelectOne(${d.id}, this.checked)"></td>
+                <td onclick="showComponents(${d.id})">${idx + 1}</td>
+                <td onclick="showComponents(${d.id})">${esc(d.server_model)}</td>
+                <td onclick="showComponents(${d.id})">${esc(d.server_version)}</td>
+                <td onclick="showComponents(${d.id})">${esc(d.asset_code)}</td>
+                <td onclick="showComponents(${d.id})" class="sn-cell">${esc(d.sn)}${matched ? `<div class="matched-comp">命中: ${esc(matched)}</div>` : ''}</td>
+                <td onclick="showComponents(${d.id})">${esc(d.bmc_ip)}</td>
+                <td onclick="showComponents(${d.id})">${esc(d.bmc_username)}</td>
+                <td onclick="showComponents(${d.id})" class="password-cell">${esc(d.bmc_password)}</td>
+                <td onclick="showComponents(${d.id})">${esc(d.os_ip)}</td>
+                <td onclick="showComponents(${d.id})">${esc(d.os_username)}</td>
+                <td onclick="showComponents(${d.id})" class="password-cell">${esc(d.os_password)}</td>
+                <td onclick="event.stopPropagation()">
+                    <select class="asset-select" onchange="updateAssetStatus(${d.id}, this.value)">
+                        <option value="" ${d.asset_status ? '' : 'selected'}>未设置</option>
+                        <option value="整机挂账" ${d.asset_status === '整机挂账' ? 'selected' : ''}>整机挂账</option>
+                        <option value="整机转散件" ${d.asset_status === '整机转散件' ? 'selected' : ''}>整机转散件</option>
+                        <option value="散件挂账" ${d.asset_status === '散件挂账' ? 'selected' : ''}>散件挂账</option>
+                    </select>
+                </td>
+                <td onclick="showComponents(${d.id})"><span class="status ${d.status}">${statusLabel(d.status)}</span></td>
+                <td onclick="showComponents(${d.id})">${d.component_count || 0}</td>
+                <td onclick="showComponents(${d.id})">${esc(d.last_collected) || '-'}</td>
+                <td class="action-cell" onclick="event.stopPropagation()">
+                    <button class="btn btn-xs" onclick="showEditDeviceModal(${d.id})">编辑</button>
+                    <button class="btn btn-xs btn-success" onclick="collectSingle(${d.id})">采集</button>
+                    <button class="btn btn-xs btn-danger" onclick="deleteDevice(${d.id}, '${esc(d.bmc_ip)}')">删</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function toggleSelectOne(id, checked) {
+    if (checked) {
+        selectedIds.add(id);
+    } else {
+        selectedIds.delete(id);
+    }
+}
+
+function toggleSelectAll() {
+    const checked = document.getElementById('selectAll').checked;
+    if (checked) {
+        selectedIds = new Set(devices.map(d => d.id));
+    } else {
+        selectedIds.clear();
+    }
+    renderDeviceTable();
+}
+
+async function batchDeleteDevices() {
+    if (!selectedIds.size) {
+        toast('请先勾选设备', 'error');
+        return;
+    }
+    if (!confirm(`确认批量删除 ${selectedIds.size} 台设备？`)) {
+        return;
+    }
+    const resp = await fetch('/api/devices/batch-delete', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ids: Array.from(selectedIds)}),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+        toast(data.error || '批量删除失败', 'error');
+        return;
+    }
+    selectedIds.clear();
+    document.getElementById('selectAll').checked = false;
+    toast(`已删除 ${data.deleted} 台设备`);
+    await loadDevices(document.getElementById('searchInput').value.trim());
+}
+
+function showBatchAddModal() {
+    document.getElementById('batchInput').value = '';
+    document.getElementById('batchAddModal').style.display = 'flex';
+}
+
+function closeBatchAddModal() {
+    document.getElementById('batchAddModal').style.display = 'none';
+}
+
+async function submitBatchAdd() {
+    const text = document.getElementById('batchInput').value.trim();
+    if (!text) {
+        toast('请输入批量数据', 'error');
+        return;
+    }
+
+    let payload = [];
+    if (text.startsWith('[')) {
+        try {
+            payload = JSON.parse(text);
+        } catch (_) {
+            toast('JSON 格式错误', 'error');
+            return;
+        }
+    } else {
+        const lines = text.split(/\r?\n/).filter(Boolean);
+        payload = lines.map(line => {
+            const p = line.split(',').map(v => v.trim());
+            return {
+                server_model: p[0] || '',
+                server_version: p[1] || '',
+                asset_code: p[2] || '',
+                sn: p[3] || '',
+                bmc_ip: p[4] || '',
+                bmc_username: p[5] || 'Administrator',
+                bmc_password: p[6] || '',
+                os_ip: p[7] || '',
+                os_username: p[8] || '',
+                os_password: p[9] || '',
+                asset_status: p[10] || '',
+            };
+        });
+    }
+
+    const resp = await fetch('/api/devices/batch', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+        toast(data.error || '批量新增失败', 'error');
+        return;
+    }
+    toast(`新增 ${data.added} 台，跳过 ${data.skipped} 台`);
+    closeBatchAddModal();
+    await loadDevices(document.getElementById('searchInput').value.trim());
+}
+
+async function updateAssetStatus(id, value) {
+    const resp = await fetch(`/api/devices/${id}/asset-status`, {
+        method: 'PATCH',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({asset_status: value}),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+        toast(data.error || '更新失败', 'error');
+        await loadDevices(document.getElementById('searchInput').value.trim());
+        return;
+    }
+    toast('整机状态已更新');
+}
+
+async function showComponents(deviceId) {
+    const resp = await fetch(`/api/devices/${deviceId}/components`);
+    const data = await resp.json();
+    if (!resp.ok) {
+        toast(data.error || '加载物料失败', 'error');
+        return;
+    }
+    currentDevice = data.device;
+    allComponents = data.components || [];
+    document.getElementById('compDeviceInfo').textContent = `${currentDevice.server_model || ''} ${currentDevice.server_version || ''} | ${currentDevice.bmc_ip || ''}`;
+    document.getElementById('compCount').textContent = allComponents.length;
+    renderComponentGroups();
+    document.getElementById('componentModal').style.display = 'flex';
+}
+
+function renderComponentGroups() {
+    const groups = {};
+    TYPE_ORDER.forEach(t => { groups[t] = []; });
+    allComponents.forEach(c => {
+        if (!groups[c.component_type]) {
+            groups[c.component_type] = [];
+        }
+        groups[c.component_type].push(c);
+    });
+
+    const container = document.getElementById('componentGroups');
+    container.innerHTML = TYPE_ORDER.map(type => {
+        const arr = groups[type] || [];
+        const rows = arr.length ? arr.map(c => `
+            <tr>
+                <td>${esc(c.slot)}</td>
+                <td>${esc(c.manufacturer)}</td>
+                <td>${esc(c.model)}</td>
+                <td class="sn-cell">${esc(c.serial_number)}</td>
+                <td>${esc(c.capacity)}</td>
+                <td><span class="source ${c.is_manual ? 'manual' : 'auto'}">${c.is_manual ? '手动' : '自动'}</span></td>
+                <td>${esc(c.collected_at)}</td>
+                <td class="action-cell">
+                    <button class="btn btn-xs" onclick="showEditComponentModal(${c.id})">编辑</button>
+                    <button class="btn btn-xs btn-danger" onclick="deleteComponent(${c.id})">删</button>
+                </td>
+            </tr>
+        `).join('') : '<tr><td colspan="8" class="empty-msg">暂无数据</td></tr>';
+
+        return `
+            <section class="group-card">
+                <div class="group-header">
+                    <h4><span class="comp-badge ${type}">${TYPE_LABEL[type]}</span></h4>
+                    <span class="group-count">${arr.length}</span>
+                </div>
+                <div class="table-wrap">
+                    <table class="data-table comp-table">
+                        <thead>
+                        <tr>
+                            <th>槽位</th>
+                            <th>制造商</th>
+                            <th>型号</th>
+                            <th>SN</th>
+                            <th>容量</th>
+                            <th>来源</th>
+                            <th>采集时间</th>
+                            <th>操作</th>
+                        </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            </section>
+        `;
+    }).join('');
+}
+
+function hideComponentModal() {
+    document.getElementById('componentModal').style.display = 'none';
+    currentDevice = null;
+    allComponents = [];
+}
+
+function exportSingleDevice() {
+    if (currentDevice) {
+        window.location.href = `/api/export/device/${currentDevice.id}`;
+    }
+}
+
+function showAddComponentModal() {
+    if (!currentDevice) {
+        toast('请先打开设备物料窗口', 'error');
+        return;
+    }
+    document.getElementById('componentModalTitle').textContent = '新增手动物料';
+    document.getElementById('editComponentId').value = '';
+    document.getElementById('componentForm').reset();
+    document.getElementById('componentEditModal').style.display = 'flex';
+}
+
+function showEditComponentModal(id) {
+    const c = allComponents.find(item => item.id === id);
+    if (!c) {
+        return;
+    }
+    document.getElementById('componentModalTitle').textContent = '编辑物料';
+    document.getElementById('editComponentId').value = c.id;
+    document.getElementById('cType').value = c.component_type;
+    document.getElementById('cSlot').value = c.slot || '';
+    document.getElementById('cManufacturer').value = c.manufacturer || '';
+    document.getElementById('cModel').value = c.model || '';
+    document.getElementById('cSerial').value = c.serial_number || '';
+    document.getElementById('cCapacity').value = c.capacity || '';
+    document.getElementById('componentEditModal').style.display = 'flex';
+}
+
+function closeComponentEditModal() {
+    document.getElementById('componentEditModal').style.display = 'none';
+}
+
+async function submitComponent(e) {
+    e.preventDefault();
+    if (!currentDevice) {
+        toast('设备上下文丢失', 'error');
+        return;
+    }
+
+    const cid = document.getElementById('editComponentId').value;
+    const payload = {
+        component_type: document.getElementById('cType').value,
+        slot: document.getElementById('cSlot').value,
+        manufacturer: document.getElementById('cManufacturer').value,
+        model: document.getElementById('cModel').value,
+        serial_number: document.getElementById('cSerial').value,
+        capacity: document.getElementById('cCapacity').value,
+        is_manual: true,
+    };
+
+    const url = cid ? `/api/components/${cid}` : `/api/devices/${currentDevice.id}/components`;
+    const method = cid ? 'PUT' : 'POST';
+
+    const resp = await fetch(url, {
+        method,
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+        toast(data.error || '保存失败', 'error');
+        return;
+    }
+
+    closeComponentEditModal();
+    toast(cid ? '物料已更新' : '物料已新增');
+    await showComponents(currentDevice.id);
+    await loadDevices(document.getElementById('searchInput').value.trim());
+}
+
+async function deleteComponent(id) {
+    if (!confirm('确认删除该物料？')) {
+        return;
+    }
+    const resp = await fetch(`/api/components/${id}`, {method: 'DELETE'});
+    const data = await resp.json();
+    if (!resp.ok) {
+        toast(data.error || '删除失败', 'error');
+        return;
+    }
+    toast('物料已删除');
+    await showComponents(currentDevice.id);
+    await loadDevices(document.getElementById('searchInput').value.trim());
+}
+
+function showAddDeviceModal() {
+    document.getElementById('deviceModalTitle').textContent = '新增设备';
+    document.getElementById('editDeviceId').value = '';
+    document.getElementById('deviceForm').reset();
+    document.getElementById('fBmcUser').value = 'Administrator';
+    document.getElementById('deviceModal').style.display = 'flex';
+}
+
+async function showEditDeviceModal(id) {
+    const d = devices.find(item => item.id === id);
+    if (!d) {
+        return;
+    }
+    document.getElementById('deviceModalTitle').textContent = '编辑设备';
+    document.getElementById('editDeviceId').value = d.id;
+    document.getElementById('fServerModel').value = d.server_model || '';
+    document.getElementById('fServerVersion').value = d.server_version || '';
+    document.getElementById('fAssetCode').value = d.asset_code || '';
+    document.getElementById('fSN').value = d.sn || '';
+    document.getElementById('fBmcIp').value = d.bmc_ip || '';
+    document.getElementById('fBmcUser').value = d.bmc_username || '';
+    document.getElementById('fBmcPass').value = '';
+    document.getElementById('fOsIp').value = d.os_ip || '';
+    document.getElementById('fOsUser').value = d.os_username || '';
+    document.getElementById('fOsPass').value = '';
+    document.getElementById('fAssetStatus').value = d.asset_status || '';
+    document.getElementById('deviceModal').style.display = 'flex';
+}
+
+function closeDeviceModal() {
+    document.getElementById('deviceModal').style.display = 'none';
+}
+
+async function submitDevice(e) {
+    e.preventDefault();
+    const id = document.getElementById('editDeviceId').value;
+
+    const payload = {
+        server_model: document.getElementById('fServerModel').value.trim(),
+        server_version: document.getElementById('fServerVersion').value.trim(),
+        asset_code: document.getElementById('fAssetCode').value.trim(),
+        sn: document.getElementById('fSN').value.trim(),
+        bmc_ip: document.getElementById('fBmcIp').value.trim(),
+        bmc_username: document.getElementById('fBmcUser').value.trim(),
+        bmc_password: document.getElementById('fBmcPass').value,
+        os_ip: document.getElementById('fOsIp').value.trim(),
+        os_username: document.getElementById('fOsUser').value.trim(),
+        os_password: document.getElementById('fOsPass').value,
+        asset_status: document.getElementById('fAssetStatus').value,
+    };
+
+    const resp = await fetch(id ? `/api/devices/${id}` : '/api/devices', {
+        method: id ? 'PUT' : 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+        toast(data.error || '保存失败', 'error');
+        return;
+    }
+
+    toast(id ? '设备已更新' : '设备已新增');
+    closeDeviceModal();
+    await loadDevices(document.getElementById('searchInput').value.trim());
+}
+
+async function deleteDevice(id, ip) {
+    if (!confirm(`确认删除设备 ${ip} 及其物料？`)) {
+        return;
+    }
+    const resp = await fetch(`/api/devices/${id}`, {method: 'DELETE'});
+    const data = await resp.json();
+    if (!resp.ok) {
+        toast(data.error || '删除失败', 'error');
+        return;
+    }
+    selectedIds.delete(id);
+    toast('设备已删除');
+    await loadDevices(document.getElementById('searchInput').value.trim());
+}
+
+async function collectSingle(id) {
+    const resp = await fetch(`/api/collect/${id}`, {method: 'POST'});
+    const data = await resp.json();
+    if (!resp.ok) {
+        toast(data.error || '触发采集失败', 'error');
+        return;
+    }
+    toast(data.message || '已启动采集');
+    setTimeout(() => loadDevices(document.getElementById('searchInput').value.trim()), 3000);
+}
+
+async function collectAll() {
+    if (!confirm('确认全量采集？')) {
+        return;
+    }
+    const resp = await fetch('/api/collect/all', {method: 'POST'});
+    const data = await resp.json();
+    if (!resp.ok) {
+        toast(data.error || '触发失败', 'error');
+        return;
+    }
+    toast(data.message || '全量采集已开始');
+    const timer = setInterval(() => loadDevices(document.getElementById('searchInput').value.trim()), 5000);
+    setTimeout(() => clearInterval(timer), 120000);
+}
+
+let searchTimer = null;
+document.getElementById('searchInput').addEventListener('input', function() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => loadDevices(this.value.trim()), 260);
+});
+
+loadDevices();
+setInterval(() => loadDevices(document.getElementById('searchInput').value.trim()), 30000);
+</script>
+</body>
+</html>

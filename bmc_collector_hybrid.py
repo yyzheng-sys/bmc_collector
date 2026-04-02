@@ -6,6 +6,7 @@ import requests
 import urllib3
 import os
 import json
+import re
 import pandas as pd
 from typing import Dict, List, Optional
 
@@ -79,23 +80,31 @@ class BMCHybridCollector:
             }
             
             response = self.session.post(login_url, json=payload, timeout=30)
-            
+
             if response.status_code == 201:
                 self.auth_token = response.headers.get('X-Auth-Token')
                 if self.auth_token:
                     self.session.headers.update({'X-Auth-Token': self.auth_token})
                     return True
-            
+
+            # 兼容部分 iBMC 固件: Session 登录失败但支持 Basic Auth
+            self.session.auth = (self.username, self.password)
+            probe = self.session.get(f"{self.base_url}/redfish/v1", timeout=30)
+            if probe.status_code == 200:
+                self.auth_token = None
+                return True
+
             return False
         except Exception as e:
             return False
     
     def disconnect_redfish(self):
-        if self.session and self.auth_token:
-            try:
-                self.session.delete(f"{self.base_url}/redfish/v1/SessionService/Sessions", timeout=10)
-            except:
-                pass
+        if self.session:
+            if self.auth_token:
+                try:
+                    self.session.delete(f"{self.base_url}/redfish/v1/SessionService/Sessions", timeout=10)
+                except Exception:
+                    pass
             self.session.close()
             self.session = None
             self.auth_token = None
@@ -135,42 +144,215 @@ class BMCHybridCollector:
                     info['chassis_serial'] = parts[1].strip()
         
         return info
+
+    def _extract_model_version(self, model_text: str) -> Dict:
+        text = (model_text or '').strip()
+        if not text:
+            return {'server_model': '', 'server_version': ''}
+
+        # 常见格式: "2288H V6" / "G5500 V7"
+        match = re.search(r'^(.*?)\s+(V\d+)\b', text, re.IGNORECASE)
+        if match:
+            return {
+                'server_model': match.group(1).strip(),
+                'server_version': match.group(2).upper(),
+            }
+        return {'server_model': text, 'server_version': ''}
+
+    def get_system_info(self) -> Dict:
+        """采集整机基础信息，用于自动回填机型/版本"""
+        system_info = {
+            'server_model': '',
+            'server_version': '',
+            'manufacturer': '',
+            'serial': '',
+            'raw_model': '',
+        }
+
+        if not self.connect_redfish():
+            return system_info
+
+        try:
+            resp = self.session.get(f"{self.base_url}/redfish/v1/Systems", timeout=30)
+            if resp.status_code != 200:
+                self.disconnect_redfish()
+                return system_info
+
+            systems_data = resp.json()
+            for member in systems_data.get('Members', []):
+                system_url = member.get('@odata.id', '')
+                if not system_url:
+                    continue
+                detail = self.session.get(f"{self.base_url}{system_url}", timeout=30)
+                if detail.status_code != 200:
+                    continue
+
+                d = detail.json()
+                model_raw = (
+                    d.get('Model', '')
+                    or d.get('Name', '')
+                    or d.get('SKU', '')
+                )
+                parsed = self._extract_model_version(model_raw)
+
+                version = (
+                    d.get('Version', '')
+                    or d.get('BiosVersion', '')
+                    or ''
+                )
+                if version and re.match(r'^\d+(\.\d+)*$', str(version)):
+                    # 避免把 BIOS 版本号误当成服务器版本
+                    version = ''
+
+                system_info = {
+                    'server_model': parsed.get('server_model', ''),
+                    'server_version': parsed.get('server_version', '') or version,
+                    'manufacturer': d.get('Manufacturer', ''),
+                    'serial': d.get('SerialNumber', ''),
+                    'raw_model': model_raw,
+                }
+
+                if system_info['server_model']:
+                    break
+        except Exception as e:
+            print(f"  获取系统信息异常: {str(e)}")
+        finally:
+            self.disconnect_redfish()
+
+        return system_info
     
-    def get_cpu_info(self) -> List[Dict]:
-        cpu_list = []
+    def get_processor_info(self) -> List[Dict]:
+        """获取所有处理器信息（CPU / GPU / NPU 等），遍历所有 Systems 节点"""
+        proc_list = []
         
         if not self.connect_redfish():
-            return cpu_list
+            return proc_list
         
         try:
             response = self.session.get(f"{self.base_url}/redfish/v1/Systems", timeout=30)
             if response.status_code == 200:
                 data = response.json()
-                if 'Members' in data and len(data['Members']) > 0:
-                    system_url = data['Members'][0]['@odata.id']
-                    response = self.session.get(f"{self.base_url}{system_url}/Processors", timeout=30)
-                    if response.status_code == 200:
-                        processors_data = response.json()
-                        if 'Members' in processors_data:
-                            for member in processors_data['Members']:
-                                processor_url = member['@odata.id']
-                                response = self.session.get(f"{self.base_url}{processor_url}", timeout=30)
-                                if response.status_code == 200:
-                                    processor_data = response.json()
-                                    cpu = {}
-                                    if 'Manufacturer' in processor_data:
-                                        cpu['manufacturer'] = processor_data['Manufacturer']
-                                    if 'SerialNumber' in processor_data:
-                                        cpu['serial'] = processor_data['SerialNumber']
-                                    if 'Model' in processor_data:
-                                        cpu['type'] = processor_data['Model']
-                                    if cpu:
-                                        cpu_list.append(cpu)
+                # 遍历所有系统节点(G5500/G8600 多节点服务器有多个 Systems 成员)
+                for sys_member in data.get('Members', []):
+                    system_url = sys_member['@odata.id']
+                    proc_resp = self.session.get(
+                        f"{self.base_url}{system_url}/Processors", timeout=30)
+                    if proc_resp.status_code != 200:
+                        continue
+                    processors_data = proc_resp.json()
+                    for member in processors_data.get('Members', []):
+                        processor_url = member['@odata.id']
+                        resp = self.session.get(
+                            f"{self.base_url}{processor_url}", timeout=30)
+                        if resp.status_code != 200:
+                            continue
+                        pd_ = resp.json()
+                        proc = {}
+                        proc['manufacturer'] = pd_.get('Manufacturer', '')
+                        proc['type'] = pd_.get('Model', '')
+                        proc['slot'] = pd_.get('Name', pd_.get('Id', ''))
+
+                        # --- SN: 尝试多个字段 ---
+                        sn = pd_.get('SerialNumber', '')
+                        if not sn:
+                            oem = pd_.get('Oem', {})
+                            for vendor in oem.values():
+                                if isinstance(vendor, dict):
+                                    sn = (vendor.get('SerialNumber', '')
+                                          or vendor.get('SN', ''))
+                                    if sn:
+                                        break
+                        proc['serial'] = sn
+
+                        # --- 处理器类型判断 ---
+                        proc_type_raw = pd_.get('ProcessorType', '').upper()
+                        name_model = (proc.get('type', '') + proc.get('slot', '')
+                                      + proc.get('manufacturer', '')).upper()
+                        
+                        if proc_type_raw == 'GPU' or any(
+                                kw in name_model for kw in
+                                ['GPU', 'NVIDIA', 'TESLA', 'RADEON', 'VGA', 'DISPLAY']):
+                            proc['processor_type'] = 'gpu'
+                        elif proc_type_raw == 'OEM' or any(
+                                kw in name_model for kw in
+                                ['NPU', 'ASCEND', 'ATLAS', 'DAVINCI']):
+                            proc['processor_type'] = 'npu'
+                        elif any(kw in name_model for kw in ['FPGA']):
+                            proc['processor_type'] = 'gpu'
+                        else:
+                            proc['processor_type'] = 'cpu'
+                        
+                        if proc:
+                            proc_list.append(proc)
         except Exception as e:
-            print(f"  获取CPU信息异常: {str(e)}")
+            print(f"  获取处理器信息异常: {str(e)}")
         
         self.disconnect_redfish()
-        return cpu_list
+        return proc_list
+
+    def get_pcie_gpu_info(self) -> List[Dict]:
+        """扫描所有 Chassis 下 PCIeDevices，查找 GPU/NPU 卡"""
+        gpu_list = []
+        
+        if not self.connect_redfish():
+            return gpu_list
+        
+        try:
+            resp = self.session.get(
+                f"{self.base_url}/redfish/v1/Chassis", timeout=30)
+            if resp.status_code != 200:
+                self.disconnect_redfish()
+                return gpu_list
+            
+            chassis_data = resp.json()
+            for chassis_member in chassis_data.get('Members', []):
+                chassis_url = chassis_member['@odata.id']
+                pcie_resp = self.session.get(
+                    f"{self.base_url}{chassis_url}/PCIeDevices", timeout=30)
+                if pcie_resp.status_code != 200:
+                    continue
+                pcie_data = pcie_resp.json()
+                for pcie_member in pcie_data.get('Members', []):
+                    pcie_url = pcie_member['@odata.id']
+                    dev_resp = self.session.get(
+                        f"{self.base_url}{pcie_url}", timeout=30)
+                    if dev_resp.status_code != 200:
+                        continue
+                    d = dev_resp.json()
+                    name = (d.get('Name', '') + d.get('Model', '')
+                            + d.get('DeviceType', '')).upper()
+                    is_gpu = any(kw in name for kw in
+                                 ['GPU', 'NVIDIA', 'TESLA', 'RADEON',
+                                  'ACCELERAT', 'VGA', 'DISPLAY'])
+                    is_npu = any(kw in name for kw in
+                                 ['NPU', 'ASCEND', 'DAVINCI'])
+                    if not is_gpu and not is_npu:
+                        continue
+                    sn = d.get('SerialNumber', '')
+                    if not sn:
+                        oem = d.get('Oem', {})
+                        for v in oem.values():
+                            if isinstance(v, dict):
+                                sn = (v.get('SerialNumber', '')
+                                      or v.get('SN', ''))
+                                if sn:
+                                    break
+                    gpu_list.append({
+                        'manufacturer': d.get('Manufacturer', ''),
+                        'type': d.get('Model', d.get('Name', '')),
+                        'slot': d.get('Name', d.get('Id', '')),
+                        'serial': sn,
+                        'processor_type': 'npu' if is_npu else 'gpu',
+                    })
+        except Exception as e:
+            print(f"  获取PCIe GPU信息异常: {str(e)}")
+        
+        self.disconnect_redfish()
+        return gpu_list
+    
+    # 保持向后兼容
+    def get_cpu_info(self) -> List[Dict]:
+        return [p for p in self.get_processor_info() if p.get('processor_type') == 'cpu']
     
     def get_memory_info(self) -> List[Dict]:
         memory_list = []
@@ -182,26 +364,50 @@ class BMCHybridCollector:
             response = self.session.get(f"{self.base_url}/redfish/v1/Systems", timeout=30)
             if response.status_code == 200:
                 data = response.json()
-                if 'Members' in data and len(data['Members']) > 0:
-                    system_url = data['Members'][0]['@odata.id']
+                for sys_member in data.get('Members', []):
+                    system_url = sys_member['@odata.id']
                     response = self.session.get(f"{self.base_url}{system_url}/Memory", timeout=30)
-                    if response.status_code == 200:
-                        memory_data = response.json()
-                        if 'Members' in memory_data:
-                            for member in memory_data['Members']:
-                                memory_url = member['@odata.id']
-                                response = self.session.get(f"{self.base_url}{memory_url}", timeout=30)
-                                if response.status_code == 200:
-                                    mem_data = response.json()
-                                    mem = {}
-                                    if 'Manufacturer' in mem_data:
-                                        mem['manufacturer'] = mem_data['Manufacturer']
-                                    if 'SerialNumber' in mem_data:
-                                        mem['serial'] = mem_data['SerialNumber']
-                                    if 'CapacityMiB' in mem_data:
-                                        mem['capacity'] = f"{mem_data['CapacityMiB']} MB"
-                                    if mem:
-                                        memory_list.append(mem)
+                    if response.status_code != 200:
+                        continue
+                    memory_data = response.json()
+                    for member in memory_data.get('Members', []):
+                        memory_url = member['@odata.id']
+                        response = self.session.get(f"{self.base_url}{memory_url}", timeout=30)
+                        if response.status_code != 200:
+                            continue
+
+                        mem_data = response.json()
+                        mem = {}
+                        if 'Manufacturer' in mem_data:
+                            mem['manufacturer'] = mem_data['Manufacturer']
+
+                        # --- SN: 尝试多种字段路径 ---
+                        sn = mem_data.get('SerialNumber', '')
+                        if not sn:
+                            oem = mem_data.get('Oem', {})
+                            for vendor in oem.values():
+                                if isinstance(vendor, dict):
+                                    sn = vendor.get('SerialNumber', '') or vendor.get('SN', '')
+                                    if sn:
+                                        break
+                        mem['serial'] = sn
+
+                        if 'CapacityMiB' in mem_data:
+                            mem['capacity'] = f"{mem_data['CapacityMiB']} MB"
+
+                        speed = (mem_data.get('OperatingSpeedMhz')
+                                 or mem_data.get('MemoryOperatingSpeedMhz'))
+                        if not speed:
+                            allowed_speeds = mem_data.get('AllowedSpeedsMHz', [])
+                            if isinstance(allowed_speeds, list) and allowed_speeds:
+                                speed = allowed_speeds[0]
+                        if speed:
+                            mem['bandwidth'] = f"{speed} MHz"
+
+                        mem['model'] = mem_data.get('PartNumber', mem_data.get('MemoryDeviceType', ''))
+                        mem['slot'] = mem_data.get('Name', mem_data.get('Id', ''))
+                        if mem:
+                            memory_list.append(mem)
         except Exception as e:
             print(f"  获取内存信息异常: {str(e)}")
         
@@ -210,55 +416,188 @@ class BMCHybridCollector:
     
     def get_disk_info(self) -> List[Dict]:
         disk_list = []
-        
-        if not self.connect_ssh():
-            return disk_list
-        
-        try:
-            output = self.run_ssh_command('ipmcget -t storage -d pdinfo -v all')
-            if output:
-                disk_list = self._parse_disks(output)
-        except Exception as e:
-            print(f"  获取硬盘信息异常: {str(e)}")
-        
-        self.disconnect_ssh()
+
+        # 先走 BMC SSH 命令
+        if self.connect_ssh():
+            try:
+                cmd_list = [
+                    'ipmcget -t storage -d pdinfo -v all',
+                    'ipmcget -d pdinfo',
+                ]
+                for cmd in cmd_list:
+                    output = self.run_ssh_command(cmd)
+                    if output:
+                        disk_list = self._parse_disks(output)
+                        if disk_list:
+                            break
+            except Exception as e:
+                print(f"  获取硬盘信息异常: {str(e)}")
+            finally:
+                self.disconnect_ssh()
+
+        # SSH 未拿到时，Redfish 兜底
+        if not disk_list:
+            disk_list = self._get_disk_info_redfish()
+
         return disk_list
-    
+
     def _parse_disks(self, output: str) -> List[Dict]:
         disks = []
         current_disk = {}
-        
-        for line in output.split('\n'):
-            line = line.strip()
-            if 'ID' in line and ':' in line and 'Device Name' not in line:
-                if current_disk and 'serial' in current_disk:
-                    disks.append(current_disk)
-                    current_disk = {}
-            elif 'Serial Number' in line:
-                parts = line.split(':', 1)
-                if len(parts) == 2:
-                    current_disk['serial'] = parts[1].strip()
-            elif 'Manufacturer' in line:
-                parts = line.split(':', 1)
-                if len(parts) == 2:
-                    current_disk['manufacturer'] = parts[1].strip()
-            elif 'Capacity' in line:
-                parts = line.split(':', 1)
-                if len(parts) == 2:
-                    current_disk['capacity'] = parts[1].strip()
-        
-        if current_disk and 'serial' in current_disk:
-            disks.append(current_disk)
-        
+
+        def flush_current():
+            if current_disk and (current_disk.get('serial') or current_disk.get('model')
+                                 or current_disk.get('capacity')):
+                disks.append(dict(current_disk))
+
+        for raw_line in output.split('\n'):
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            # 新盘分隔（兼容不同 iBMC 输出）
+            if ((line.startswith('ID') or line.startswith('Disk') or line.startswith('Slot'))
+                    and ':' in line and 'Device Name' not in line and current_disk):
+                flush_current()
+                current_disk = {}
+
+            if ':' not in line:
+                continue
+
+            key, value = line.split(':', 1)
+            key = key.strip().lower()
+            value = value.strip()
+
+            if key in ['serial number', 'serial', 'sn']:
+                current_disk['serial'] = value
+            elif key in ['manufacturer', 'vendor']:
+                current_disk['manufacturer'] = value
+            elif key in ['capacity', 'size']:
+                current_disk['capacity'] = value
+            elif key in ['model', 'device model', 'product']:
+                current_disk['model'] = value
+
+        flush_current()
         return disks
+
+    def _format_capacity(self, capacity_bytes) -> str:
+        try:
+            size = int(capacity_bytes)
+            tb = size / (1024 ** 4)
+            if tb >= 1:
+                return f"{tb:.3f} TB"
+            gb = size / (1024 ** 3)
+            return f"{gb:.1f} GB"
+        except Exception:
+            return ''
+
+    def _get_disk_info_redfish(self) -> List[Dict]:
+        disk_list = []
+
+        if not self.connect_redfish():
+            return disk_list
+
+        try:
+            # 路径1: Systems/*/Storage
+            systems_resp = self.session.get(f"{self.base_url}/redfish/v1/Systems", timeout=30)
+            if systems_resp.status_code == 200:
+                systems_data = systems_resp.json()
+                for sys_member in systems_data.get('Members', []):
+                    system_url = sys_member.get('@odata.id', '')
+                    if not system_url:
+                        continue
+                    storage_resp = self.session.get(
+                        f"{self.base_url}{system_url}/Storage", timeout=30)
+                    if storage_resp.status_code != 200:
+                        continue
+                    storage_data = storage_resp.json()
+                    for storage_member in storage_data.get('Members', []):
+                        storage_url = storage_member.get('@odata.id', '')
+                        if not storage_url:
+                            continue
+                        storage_detail = self.session.get(
+                            f"{self.base_url}{storage_url}", timeout=30)
+                        if storage_detail.status_code != 200:
+                            continue
+                        sdata = storage_detail.json()
+                        for drive in sdata.get('Drives', []):
+                            drive_url = drive.get('@odata.id', '')
+                            if not drive_url:
+                                continue
+                            drive_resp = self.session.get(
+                                f"{self.base_url}{drive_url}", timeout=30)
+                            if drive_resp.status_code != 200:
+                                continue
+                            dd = drive_resp.json()
+                            disk_list.append({
+                                'serial': dd.get('SerialNumber', ''),
+                                'manufacturer': dd.get('Manufacturer', ''),
+                                'model': dd.get('Model', ''),
+                                'capacity': self._format_capacity(dd.get('CapacityBytes', 0)),
+                            })
+
+            # 路径2: Chassis/*/Drives（用于部分 G5500/G8600 固件）
+            if not disk_list:
+                chassis_resp = self.session.get(f"{self.base_url}/redfish/v1/Chassis", timeout=30)
+                if chassis_resp.status_code == 200:
+                    chassis_data = chassis_resp.json()
+                    for ch_member in chassis_data.get('Members', []):
+                        ch_url = ch_member.get('@odata.id', '')
+                        if not ch_url:
+                            continue
+                        drives_resp = self.session.get(
+                            f"{self.base_url}{ch_url}/Drives", timeout=30)
+                        if drives_resp.status_code != 200:
+                            continue
+                        for d_member in drives_resp.json().get('Members', []):
+                            d_url = d_member.get('@odata.id', '')
+                            if not d_url:
+                                continue
+                            d_resp = self.session.get(f"{self.base_url}{d_url}", timeout=30)
+                            if d_resp.status_code != 200:
+                                continue
+                            dd = d_resp.json()
+                            disk_list.append({
+                                'serial': dd.get('SerialNumber', ''),
+                                'manufacturer': dd.get('Manufacturer', ''),
+                                'model': dd.get('Model', dd.get('Name', '')),
+                                'capacity': self._format_capacity(dd.get('CapacityBytes', 0)),
+                            })
+        except Exception as e:
+            print(f"  Redfish获取硬盘信息异常: {str(e)}")
+        finally:
+            self.disconnect_redfish()
+
+        # 清理空盘项
+        cleaned = []
+        for d in disk_list:
+            if d.get('serial') or d.get('model') or d.get('capacity'):
+                cleaned.append(d)
+        return cleaned
     
     def get_all_info(self) -> Dict:
         print(f"\n正在采集 {self.ip} 的信息...")
         
+        processors = self.get_processor_info()
+        
+        # 补充: 从 PCIeDevices 扫描 GPU/NPU，合并去重
+        pcie_gpus = self.get_pcie_gpu_info()
+        existing_sns = {p['serial'] for p in processors if p.get('serial')}
+        existing_slots = {p['slot'] for p in processors if p.get('slot')}
+        for gpu in pcie_gpus:
+            # 跳过已通过 Processors 采集到的（按 SN 或 slot 去重）
+            if gpu.get('serial') and gpu['serial'] in existing_sns:
+                continue
+            if gpu.get('slot') and gpu['slot'] in existing_slots:
+                continue
+            processors.append(gpu)
+        
         info = {
             'ip': self.ip,
             'fru': self.get_fru_info(),
-            'cpus': self.get_cpu_info(),
+            'system': self.get_system_info(),
+            'processors': processors,
+            'cpus': [p for p in processors if p.get('processor_type') == 'cpu'],
             'memory': self.get_memory_info(),
             'disks': self.get_disk_info()
         }
