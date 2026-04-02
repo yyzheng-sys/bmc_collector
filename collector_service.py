@@ -214,17 +214,33 @@ def _collect_nic_redfish(collector: BMCHybridCollector):
     """通过 Redfish NetworkAdapters 采集网卡"""
     nics = []
 
+    _NULL_STRINGS = {'null', 'n/a', 'na', 'none', 'unknown', ''}
+
+    def _is_valid_sn(val):
+        return bool(val) and str(val).strip().lower() not in _NULL_STRINGS
+
     def _extract_sn(data):
         sn = data.get('SerialNumber', '')
-        if sn:
-            return sn
+        if _is_valid_sn(sn):
+            return sn.strip()
         oem = data.get('Oem', {})
         for vendor in oem.values():
             if isinstance(vendor, dict):
                 sn = vendor.get('SerialNumber', '') or vendor.get('SN', '')
-                if sn:
-                    return sn
+                if _is_valid_sn(sn):
+                    return sn.strip()
         return ''
+
+    def _extract_oem_card_info(data):
+        """从 Oem.xFusion / Oem.Huawei 提取 CardModel 和 CardManufacturer"""
+        oem = data.get('Oem', {})
+        card_model = ''
+        card_mfr = ''
+        for vendor in oem.values():
+            if isinstance(vendor, dict):
+                card_model = card_model or vendor.get('CardModel', '')
+                card_mfr = card_mfr or vendor.get('CardManufacturer', '')
+        return card_model, card_mfr
 
     def _chip_model_from_text(text: str) -> str:
         upper = (text or '').upper()
@@ -309,9 +325,17 @@ def _collect_nic_redfish(collector: BMCHybridCollector):
                 chip_model = _chip_model_from_text(
                     f"{d.get('Model', '')} {d.get('Name', '')} {d.get('PartNumber', '')}")
 
+                oem_card_model, oem_card_mfr = _extract_oem_card_info(d)
+
                 port_profile = _nic_model_from_ports(url)
-                nic_model = port_profile.get('model', '') or d.get('Model', '')
+                nic_model = port_profile.get('model', '')
                 speed = port_profile.get('speed', '')
+
+                # 端口扫描没取到型号时，优先用 OEM CardModel，其次用 adapter Model
+                if not nic_model:
+                    nic_model = oem_card_model or d.get('Model', '')
+
+                manufacturer = oem_card_mfr or d.get('Manufacturer', '')
 
                 # 指定 SN 的优化映射
                 if sn.upper() == 'MT2245XZ0LLH':
@@ -321,7 +345,7 @@ def _collect_nic_redfish(collector: BMCHybridCollector):
 
                 nics.append({
                     'slot': d.get('Name', d.get('Id', '')),
-                    'manufacturer': d.get('Manufacturer', ''),
+                    'manufacturer': manufacturer,
                     'chip_model': chip_model,
                     'model': nic_model,
                     'serial': sn,
