@@ -193,6 +193,24 @@ class BMCHybridCollector:
                     or d.get('Name', '')
                     or d.get('SKU', '')
                 )
+                # 过滤 Redfish 通用默认名称
+                _generic = {'computer system', 'system', 'server', ''}
+                if model_raw.strip().lower() in _generic:
+                    model_raw = ''
+
+                # 从 Oem 字段提取型号/版本（华为/xFusion 设备常见）
+                oem = d.get('Oem', {})
+                oem_product_name = ''
+                oem_product_version = ''
+                for vendor in oem.values():
+                    if isinstance(vendor, dict):
+                        oem_product_name = oem_product_name or vendor.get('ProductName', '') or ''
+                        oem_product_version = oem_product_version or vendor.get('ProductVersion', '') or ''
+
+                # 如果标准 Model 为空/通用，优先使用 OEM ProductName
+                if not model_raw and oem_product_name:
+                    model_raw = oem_product_name
+
                 parsed = self._extract_model_version(model_raw)
 
                 version = (
@@ -203,6 +221,11 @@ class BMCHybridCollector:
                 if version and re.match(r'^\d+(\.\d+)*$', str(version)):
                     # 避免把 BIOS 版本号误当成服务器版本
                     version = ''
+
+                # OEM ProductVersion 作为版本兜底
+                if not parsed.get('server_version', '') and not version and oem_product_version:
+                    if re.match(r'^V\d+', oem_product_version, re.IGNORECASE):
+                        version = oem_product_version.upper()
 
                 system_info = {
                     'server_model': parsed.get('server_model', ''),

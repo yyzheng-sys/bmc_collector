@@ -14,6 +14,15 @@ from bmc_collector_hybrid import BMCHybridCollector
 from os_collector import OSCollector
 from typing import Dict
 
+# 用于过滤无效的 Redfish 返回值
+_INVALID_VALUES = {'n/a', 'na', 'null', 'none', 'unknown', 'not specified', '0', ''}
+
+
+def _sanitize(val) -> str:
+    """清洗字段值，将 N/A / null / 0 等无效值转为空字符串"""
+    s = str(val).strip() if val is not None else ''
+    return '' if s.lower() in _INVALID_VALUES else s
+
 
 def _collect_one(device: Device) -> str:
     """采集单台设备，返回状态说明文本"""
@@ -47,6 +56,10 @@ def _collect_one(device: Device) -> str:
     system = info.get('system', {})
     auto_model = system.get('server_model', '').strip()
     auto_version = system.get('server_version', '').strip()
+    # 清除旧的通用名称
+    _generic_models = {'computer system', 'system', 'server'}
+    if (device.server_model or '').strip().lower() in _generic_models:
+        device.server_model = ''
     if auto_model:
         device.server_model = auto_model
     if auto_version:
@@ -66,7 +79,7 @@ def _collect_one(device: Device) -> str:
             slot=proc.get('slot', default_slot),
             manufacturer=proc.get('manufacturer', ''),
             model=proc.get('type', ''),
-            serial_number=proc.get('serial', ''),
+            serial_number=_sanitize(proc.get('serial', '')),
             capacity='',
             collected_at=now,
         )
@@ -90,16 +103,23 @@ def _collect_one(device: Device) -> str:
         )
         db.session.add(comp)
 
-    # --- Disk ---
-    for idx, disk in enumerate(info.get('disks', []), start=1):
+    # --- Disk (过滤空槽位：SN/型号/容量全为空的条目不入库) ---
+    disk_idx = 0
+    for disk in info.get('disks', []):
+        d_sn = _sanitize(disk.get('serial', ''))
+        d_model = _sanitize(disk.get('model', ''))
+        d_cap = _sanitize(disk.get('capacity', ''))
+        if not d_sn and not d_model and not d_cap:
+            continue  # 空槽位，跳过
+        disk_idx += 1
         comp = Component(
             device_id=device.id,
             component_type='disk',
-            slot=f'Disk {idx}',
-            manufacturer=disk.get('manufacturer', ''),
-            model=disk.get('model', ''),
-            serial_number=disk.get('serial', ''),
-            capacity=disk.get('capacity', ''),
+            slot=f'Disk {disk_idx}',
+            manufacturer=_sanitize(disk.get('manufacturer', '')),
+            model=d_model,
+            serial_number=d_sn,
+            capacity=d_cap,
             collected_at=now,
         )
         db.session.add(comp)
@@ -170,12 +190,13 @@ def _merge_os_info(device_id: int, os_info: Dict, now) -> int:
 
     # GPU
     for gpu in os_info.get('gpus', []):
-        if gpu.get('serial') and gpu['serial'] in existing_sns:
+        sn = _sanitize(gpu.get('serial', ''))
+        if sn and sn in existing_sns:
             continue
         comp = Component(
             device_id=device_id, component_type='gpu',
             slot=gpu.get('slot', ''), manufacturer=gpu.get('manufacturer', ''),
-            model=gpu.get('type', ''), serial_number=gpu.get('serial', ''),
+            model=gpu.get('type', ''), serial_number=sn,
             capacity=gpu.get('capacity', ''), extra_info='via_os',
             collected_at=now)
         db.session.add(comp)
@@ -183,12 +204,13 @@ def _merge_os_info(device_id: int, os_info: Dict, now) -> int:
 
     # NPU
     for npu in os_info.get('npus', []):
-        if npu.get('serial') and npu['serial'] in existing_sns:
+        sn = _sanitize(npu.get('serial', ''))
+        if sn and sn in existing_sns:
             continue
         comp = Component(
             device_id=device_id, component_type='npu',
             slot=npu.get('slot', ''), manufacturer=npu.get('manufacturer', ''),
-            model=npu.get('type', ''), serial_number=npu.get('serial', ''),
+            model=npu.get('type', ''), serial_number=sn,
             capacity=npu.get('capacity', ''), extra_info='via_os',
             collected_at=now)
         db.session.add(comp)
@@ -200,7 +222,7 @@ def _merge_os_info(device_id: int, os_info: Dict, now) -> int:
             comp = Component(
                 device_id=device_id, component_type='cpu',
                 slot=cpu.get('slot', ''), manufacturer=cpu.get('manufacturer', ''),
-                model=cpu.get('type', ''), serial_number=cpu.get('serial', ''),
+                model=cpu.get('type', ''), serial_number=_sanitize(cpu.get('serial', '')),
                 extra_info='via_os', collected_at=now)
             db.session.add(comp)
             added += 1
