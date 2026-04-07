@@ -15,5 +15,8 @@ class Config:
     COLLECTION_TIMEOUT = 60             # 单台设备采集超时(秒)
     COLLECTION_MAX_WORKERS = 5          # 并发采集线程数
 
+    # 服务端口
+    SERVER_PORT = int(os.environ.get('BMC_PORT', 5010))
+
     # 加密密钥文件
     ENCRYPTION_KEY_FILE = os.path.join(BASE_DIR, '.encryption_key')

@@ -46,11 +46,18 @@ def _collect_one(device: Device) -> str:
 
     now = datetime.now()
 
-    # --- FRU → 更新设备 SN ---
+    # --- 更新设备 SN (优先 Redfish SerialNumber，其次 FRU product_serial) ---
     fru = info.get('fru', {})
-    product_serial = fru.get('product_serial', '')
-    if product_serial and product_serial != 'N/A':
-        device.sn = product_serial
+    system = info.get('system', {})
+    serial_candidates = [
+        _sanitize(system.get('serial', '')),
+        _sanitize(fru.get('product_serial', '')),
+        _sanitize(fru.get('chassis_serial', '')),
+    ]
+    for sn_candidate in serial_candidates:
+        if sn_candidate:
+            device.sn = sn_candidate
+            break
 
     # --- 自动回填机型/版本 ---
     system = info.get('system', {})

@@ -534,4 +534,9 @@ scheduler.start()
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    import argparse
+    parser = argparse.ArgumentParser(description='机房资产管理平台')
+    parser.add_argument('-p', '--port', type=int, default=Config.SERVER_PORT,
+                        help=f'服务端口 (默认: {Config.SERVER_PORT}，也可通过环境变量 BMC_PORT 设置)')
+    args = parser.parse_args()
+    app.run(host='0.0.0.0', port=args.port, debug=True)

@@ -288,19 +288,19 @@ function renderDeviceTable() {
         const matched = (d.matched_components || []).map(c => `${c.type_label}:${c.serial_number || c.model}`).join(' | ');
         return `
             <tr class="${currentDevice && currentDevice.id === d.id ? 'active-row' : ''}">
-                <td onclick="event.stopPropagation()"><input type="checkbox" ${checked} onchange="toggleSelectOne(${d.id}, this.checked)"></td>
-                <td onclick="showComponents(${d.id})">${idx + 1}</td>
-                <td onclick="showComponents(${d.id})">${esc(d.server_model)}</td>
-                <td onclick="showComponents(${d.id})">${esc(d.server_version)}</td>
-                <td onclick="showComponents(${d.id})">${esc(d.asset_code)}</td>
-                <td onclick="showComponents(${d.id})" class="sn-cell">${esc(d.sn)}${matched ? `<div class="matched-comp">命中: ${esc(matched)}</div>` : ''}</td>
-                <td onclick="showComponents(${d.id})">${esc(d.bmc_ip)}</td>
-                <td onclick="showComponents(${d.id})">${esc(d.bmc_username)}</td>
-                <td onclick="showComponents(${d.id})" class="password-cell">${esc(d.bmc_password)}</td>
-                <td onclick="showComponents(${d.id})">${esc(d.os_ip)}</td>
-                <td onclick="showComponents(${d.id})">${esc(d.os_username)}</td>
-                <td onclick="showComponents(${d.id})" class="password-cell">${esc(d.os_password)}</td>
-                <td onclick="event.stopPropagation()">
+                <td><input type="checkbox" ${checked} onchange="toggleSelectOne(${d.id}, this.checked)"></td>
+                <td>${idx + 1}</td>
+                <td>${esc(d.server_model)}</td>
+                <td>${esc(d.server_version)}</td>
+                <td>${esc(d.asset_code)}</td>
+                <td class="sn-cell">${esc(d.sn)}${matched ? `<div class="matched-comp">命中: ${esc(matched)}</div>` : ''}</td>
+                <td>${esc(d.bmc_ip)}</td>
+                <td>${esc(d.bmc_username)}</td>
+                <td class="password-cell">${esc(d.bmc_password)}</td>
+                <td>${esc(d.os_ip)}</td>
+                <td>${esc(d.os_username)}</td>
+                <td class="password-cell">${esc(d.os_password)}</td>
+                <td>
                     <select class="asset-select" onchange="updateAssetStatus(${d.id}, this.value)">
                         <option value="" ${d.asset_status ? '' : 'selected'}>未设置</option>
                         <option value="整机挂账" ${d.asset_status === '整机挂账' ? 'selected' : ''}>整机挂账</option>
@@ -308,10 +308,11 @@ function renderDeviceTable() {
                         <option value="散件挂账" ${d.asset_status === '散件挂账' ? 'selected' : ''}>散件挂账</option>
                     </select>
                 </td>
-                <td onclick="showComponents(${d.id})"><span class="status ${d.status}">${statusLabel(d.status)}</span></td>
-                <td onclick="showComponents(${d.id})">${d.component_count || 0}</td>
-                <td onclick="showComponents(${d.id})">${esc(d.last_collected) || '-'}</td>
-                <td class="action-cell" onclick="event.stopPropagation()">
+                <td><span class="status ${d.status}">${statusLabel(d.status)}</span></td>
+                <td>${d.component_count || 0}</td>
+                <td>${esc(d.last_collected) || '-'}</td>
+                <td class="action-cell">
+                    <button class="btn btn-xs btn-info" onclick="showComponents(${d.id})">详情</button>
                     <button class="btn btn-xs" onclick="showEditDeviceModal(${d.id})">编辑</button>
                     <button class="btn btn-xs btn-success" onclick="collectSingle(${d.id})">采集</button>
                     <button class="btn btn-xs btn-danger" onclick="deleteDevice(${d.id}, '${esc(d.bmc_ip)}')">删</button>

@@ -603,17 +603,11 @@ class BMCHybridCollector:
         
         processors = self.get_processor_info()
         
-        # 补充: 从 PCIeDevices 扫描 GPU/NPU，合并去重
-        pcie_gpus = self.get_pcie_gpu_info()
-        existing_sns = {p['serial'] for p in processors if p.get('serial')}
-        existing_slots = {p['slot'] for p in processors if p.get('slot')}
-        for gpu in pcie_gpus:
-            # 跳过已通过 Processors 采集到的（按 SN 或 slot 去重）
-            if gpu.get('serial') and gpu['serial'] in existing_sns:
-                continue
-            if gpu.get('slot') and gpu['slot'] in existing_slots:
-                continue
-            processors.append(gpu)
+        # 补充: 仅当 Processors 端点未采集到 GPU/NPU 时，才从 PCIeDevices 扫描
+        gpu_npu_from_proc = [p for p in processors if p.get('processor_type') in ('gpu', 'npu')]
+        if not gpu_npu_from_proc:
+            pcie_gpus = self.get_pcie_gpu_info()
+            processors.extend(pcie_gpus)
         
         info = {
             'ip': self.ip,
