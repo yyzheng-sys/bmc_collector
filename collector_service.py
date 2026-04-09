@@ -323,7 +323,7 @@ def _collect_nic_redfish(collector: BMCHybridCollector):
         return result
 
     try:
-        if not collector.connect_redfish():
+        if not collector._ensure_redfish():
             return nics
 
         chassis_resp = collector.session.get(

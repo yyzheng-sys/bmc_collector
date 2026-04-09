@@ -209,6 +209,21 @@ body {
     background: #fff;
 }
 
+.asset-desc-preview {
+    font-size: 11px;
+    color: var(--subtle);
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: help;
+    margin-top: 2px;
+}
+
+.form-group-full {
+    grid-column: 1 / -1;
+}
+
 .status {
     border-radius: 999px;
     padding: 1px 9px;
@@ -237,6 +252,7 @@ body {
 .btn-success { background: var(--success); color: #fff; border-color: var(--success); }
 .btn-danger { background: var(--danger); color: #fff; border-color: var(--danger); }
 .btn-info { background: var(--primary-2); color: #fff; border-color: var(--primary-2); }
+.btn-warning { background: var(--warn); color: #fff; border-color: var(--warn); }
 .btn-sm { padding: 6px 10px; }
 .btn-xs { padding: 4px 8px; }
 

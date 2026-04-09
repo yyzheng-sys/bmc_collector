@@ -25,6 +25,7 @@ class BMCHybridCollector:
         self.session = None
         self.base_url = f"https://{ip}"
         self.auth_token = None
+        self.session_location = None  # Redfish session URL for proper logout
     
     def connect_ssh(self) -> bool:
         try:
@@ -83,6 +84,7 @@ class BMCHybridCollector:
 
             if response.status_code == 201:
                 self.auth_token = response.headers.get('X-Auth-Token')
+                self.session_location = response.headers.get('Location', '')
                 if self.auth_token:
                     self.session.headers.update({'X-Auth-Token': self.auth_token})
                     return True
@@ -102,12 +104,18 @@ class BMCHybridCollector:
         if self.session:
             if self.auth_token:
                 try:
-                    self.session.delete(f"{self.base_url}/redfish/v1/SessionService/Sessions", timeout=10)
+                    # 正确注销: 使用登录时返回的 session URL
+                    if self.session_location:
+                        loc = self.session_location
+                        if not loc.startswith('http'):
+                            loc = f"{self.base_url}{loc}"
+                        self.session.delete(loc, timeout=10)
                 except Exception:
                     pass
             self.session.close()
             self.session = None
             self.auth_token = None
+            self.session_location = None
     
     def get_fru_info(self) -> Dict:
         fru_info = {}
@@ -159,6 +167,15 @@ class BMCHybridCollector:
             }
         return {'server_model': text, 'server_version': ''}
 
+    def _ensure_redfish(self) -> bool:
+        """确保 Redfish 连接可用，已连接则复用"""
+        if self.session and self.auth_token:
+            return True
+        if self.session:
+            # 有 session 但无 token (Basic Auth)
+            return True
+        return self.connect_redfish()
+
     def get_system_info(self) -> Dict:
         """采集整机基础信息，用于自动回填机型/版本"""
         system_info = {
@@ -169,13 +186,12 @@ class BMCHybridCollector:
             'raw_model': '',
         }
 
-        if not self.connect_redfish():
+        if not self._ensure_redfish():
             return system_info
 
         try:
             resp = self.session.get(f"{self.base_url}/redfish/v1/Systems", timeout=30)
             if resp.status_code != 200:
-                self.disconnect_redfish()
                 return system_info
 
             systems_data = resp.json()
@@ -239,8 +255,6 @@ class BMCHybridCollector:
                     break
         except Exception as e:
             print(f"  获取系统信息异常: {str(e)}")
-        finally:
-            self.disconnect_redfish()
 
         return system_info
     
@@ -248,7 +262,7 @@ class BMCHybridCollector:
         """获取所有处理器信息（CPU / GPU / NPU 等），遍历所有 Systems 节点"""
         proc_list = []
         
-        if not self.connect_redfish():
+        if not self._ensure_redfish():
             return proc_list
         
         try:
@@ -310,21 +324,19 @@ class BMCHybridCollector:
         except Exception as e:
             print(f"  获取处理器信息异常: {str(e)}")
         
-        self.disconnect_redfish()
         return proc_list
 
     def get_pcie_gpu_info(self) -> List[Dict]:
         """扫描所有 Chassis 下 PCIeDevices，查找 GPU/NPU 卡"""
         gpu_list = []
         
-        if not self.connect_redfish():
+        if not self._ensure_redfish():
             return gpu_list
         
         try:
             resp = self.session.get(
                 f"{self.base_url}/redfish/v1/Chassis", timeout=30)
             if resp.status_code != 200:
-                self.disconnect_redfish()
                 return gpu_list
             
             chassis_data = resp.json()
@@ -370,7 +382,6 @@ class BMCHybridCollector:
         except Exception as e:
             print(f"  获取PCIe GPU信息异常: {str(e)}")
         
-        self.disconnect_redfish()
         return gpu_list
     
     # 保持向后兼容
@@ -380,7 +391,7 @@ class BMCHybridCollector:
     def get_memory_info(self) -> List[Dict]:
         memory_list = []
         
-        if not self.connect_redfish():
+        if not self._ensure_redfish():
             return memory_list
         
         try:
@@ -434,7 +445,6 @@ class BMCHybridCollector:
         except Exception as e:
             print(f"  获取内存信息异常: {str(e)}")
         
-        self.disconnect_redfish()
         return memory_list
     
     def get_disk_info(self) -> List[Dict]:
@@ -517,7 +527,7 @@ class BMCHybridCollector:
     def _get_disk_info_redfish(self) -> List[Dict]:
         disk_list = []
 
-        if not self.connect_redfish():
+        if not self._ensure_redfish():
             return disk_list
 
         try:
@@ -588,8 +598,6 @@ class BMCHybridCollector:
                             })
         except Exception as e:
             print(f"  Redfish获取硬盘信息异常: {str(e)}")
-        finally:
-            self.disconnect_redfish()
 
         # 清理空盘项
         cleaned = []
@@ -601,23 +609,30 @@ class BMCHybridCollector:
     def get_all_info(self) -> Dict:
         print(f"\n正在采集 {self.ip} 的信息...")
         
-        processors = self.get_processor_info()
+        # 建立单一 Redfish 连接，所有采集方法复用
+        self.connect_redfish()
         
-        # 补充: 仅当 Processors 端点未采集到 GPU/NPU 时，才从 PCIeDevices 扫描
-        gpu_npu_from_proc = [p for p in processors if p.get('processor_type') in ('gpu', 'npu')]
-        if not gpu_npu_from_proc:
-            pcie_gpus = self.get_pcie_gpu_info()
-            processors.extend(pcie_gpus)
-        
-        info = {
-            'ip': self.ip,
-            'fru': self.get_fru_info(),
-            'system': self.get_system_info(),
-            'processors': processors,
-            'cpus': [p for p in processors if p.get('processor_type') == 'cpu'],
-            'memory': self.get_memory_info(),
-            'disks': self.get_disk_info()
-        }
+        try:
+            processors = self.get_processor_info()
+            
+            # 补充: 仅当 Processors 端点未采集到 GPU/NPU 时，才从 PCIeDevices 扫描
+            gpu_npu_from_proc = [p for p in processors if p.get('processor_type') in ('gpu', 'npu')]
+            if not gpu_npu_from_proc:
+                pcie_gpus = self.get_pcie_gpu_info()
+                processors.extend(pcie_gpus)
+            
+            info = {
+                'ip': self.ip,
+                'fru': self.get_fru_info(),
+                'system': self.get_system_info(),
+                'processors': processors,
+                'cpus': [p for p in processors if p.get('processor_type') == 'cpu'],
+                'memory': self.get_memory_info(),
+                'disks': self.get_disk_info()
+            }
+        finally:
+            # 统一注销 Redfish session，避免泄漏
+            self.disconnect_redfish()
         
         return info
 

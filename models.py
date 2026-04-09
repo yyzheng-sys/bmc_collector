@@ -51,6 +51,7 @@ class Device(db.Model):
     os_username = db.Column(db.String(100), default='')
     os_password_enc = db.Column(db.Text, default='')
     asset_status = db.Column(db.String(20), default='')           # 整机挂账 / 整机转散件 / 散件挂账
+    asset_description = db.Column(db.Text, default='')            # 整机资产描述（整机挂账时维护）
     status = db.Column(db.String(20), default='unknown')          # online / offline / collecting / unknown
     last_collected = db.Column(db.DateTime)
     collection_message = db.Column(db.Text, default='')
@@ -99,6 +100,7 @@ class Device(db.Model):
             'os_username': self.os_username,
             'os_password': self.os_password,
             'asset_status': self.asset_status or '',
+            'asset_description': self.asset_description or '',
             'status': self.status,
             'last_collected': self.last_collected.strftime('%Y-%m-%d %H:%M:%S') if self.last_collected else '',
             'collection_message': self.collection_message or '',

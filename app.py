@@ -44,6 +44,10 @@ def _migrate_db():
         db.session.execute(db.text(
             "ALTER TABLE component ADD COLUMN is_manual BOOLEAN DEFAULT 0"
         ))
+    if not _column_exists('device', 'asset_description'):
+        db.session.execute(db.text(
+            "ALTER TABLE device ADD COLUMN asset_description TEXT DEFAULT ''"
+        ))
     db.session.commit()
 
 
@@ -142,6 +146,7 @@ def add_device():
         os_username=data.get('os_username', '').strip(),
         os_password_enc='',
         asset_status=data.get('asset_status', '').strip(),
+        asset_description=data.get('asset_description', '').strip(),
     )
 
     device.bmc_password = data.get('bmc_password', '')
@@ -176,6 +181,7 @@ def update_device(device_id):
     device.os_ip = data.get('os_ip', device.os_ip).strip()
     device.os_username = data.get('os_username', device.os_username).strip()
     device.asset_status = data.get('asset_status', device.asset_status or '').strip()
+    device.asset_description = data.get('asset_description', device.asset_description or '').strip()
 
     if data.get('bmc_password'):
         device.bmc_password = data.get('bmc_password', '')
@@ -199,6 +205,8 @@ def update_asset_status(device_id):
         return jsonify({'error': 'asset_status 非法'}), 400
 
     device.asset_status = status
+    if 'asset_description' in data:
+        device.asset_description = data.get('asset_description', '').strip()
     db.session.commit()
     return jsonify({'message': '更新成功', 'device': device.to_dict()})
 
@@ -244,6 +252,7 @@ def batch_add_devices():
             os_username=data.get('os_username', '').strip(),
             os_password_enc='',
             asset_status=data.get('asset_status', '').strip(),
+            asset_description=data.get('asset_description', '').strip(),
         )
         device.bmc_password = data.get('bmc_password', '')
         if data.get('os_password'):
@@ -411,6 +420,7 @@ def export_devices():
             '资产编码': d.asset_code,
             '设备SN': d.sn,
             '整机状态': d.asset_status or '',
+            '整机资产描述': d.asset_description or '',
             'BMC IP': d.bmc_ip,
             'BMC账号': d.bmc_username,
             'BMC密码': d.bmc_password,

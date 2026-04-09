@@ -102,12 +102,16 @@
                     <div class="form-group"><label>OS账号</label><input id="fOsUser"></div>
                     <div class="form-group"><label>OS密码</label><input id="fOsPass"></div>
                     <div class="form-group"><label>整机状态</label>
-                        <select id="fAssetStatus">
+                        <select id="fAssetStatus" onchange="toggleAssetDescField()">
                             <option value="">未设置</option>
                             <option value="整机挂账">整机挂账</option>
                             <option value="整机转散件">整机转散件</option>
                             <option value="散件挂账">散件挂账</option>
                         </select>
+                    </div>
+                    <div class="form-group form-group-full" id="fAssetDescGroup" style="display:none;">
+                        <label>整机资产描述</label>
+                        <textarea id="fAssetDescription" rows="3" style="width:100%;resize:vertical;" placeholder="整机挂账时填写资产描述"></textarea>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -301,18 +305,19 @@ function renderDeviceTable() {
                 <td>${esc(d.os_username)}</td>
                 <td class="password-cell">${esc(d.os_password)}</td>
                 <td>
-                    <select class="asset-select" onchange="updateAssetStatus(${d.id}, this.value)">
+                    <select class="asset-select" onchange="updateAssetStatus(${d.id}, this.value)" title="${d.asset_description ? esc(d.asset_description) : ''}">
                         <option value="" ${d.asset_status ? '' : 'selected'}>未设置</option>
                         <option value="整机挂账" ${d.asset_status === '整机挂账' ? 'selected' : ''}>整机挂账</option>
                         <option value="整机转散件" ${d.asset_status === '整机转散件' ? 'selected' : ''}>整机转散件</option>
                         <option value="散件挂账" ${d.asset_status === '散件挂账' ? 'selected' : ''}>散件挂账</option>
-                    </select>
+                    </select>${d.asset_status === '整机挂账' && d.asset_description ? `<div class="asset-desc-preview" title="${esc(d.asset_description)}">${esc(d.asset_description).substring(0, 30)}${d.asset_description.length > 30 ? '...' : ''}</div>` : ''}
                 </td>
                 <td><span class="status ${d.status}">${statusLabel(d.status)}</span></td>
                 <td>${d.component_count || 0}</td>
                 <td>${esc(d.last_collected) || '-'}</td>
                 <td class="action-cell">
                     <button class="btn btn-xs btn-info" onclick="showComponents(${d.id})">详情</button>
+                    <button class="btn btn-xs btn-warning" onclick="openBmcPage('${esc(d.bmc_ip)}')">BMC</button>
                     <button class="btn btn-xs" onclick="showEditDeviceModal(${d.id})">编辑</button>
                     <button class="btn btn-xs btn-success" onclick="collectSingle(${d.id})">采集</button>
                     <button class="btn btn-xs btn-danger" onclick="deleteDevice(${d.id}, '${esc(d.bmc_ip)}')">删</button>
@@ -611,7 +616,14 @@ function showAddDeviceModal() {
     document.getElementById('editDeviceId').value = '';
     document.getElementById('deviceForm').reset();
     document.getElementById('fBmcUser').value = 'Administrator';
+    document.getElementById('fAssetDescription').value = '';
+    toggleAssetDescField();
     document.getElementById('deviceModal').style.display = 'flex';
+}
+
+function openBmcPage(ip) {
+    if (!ip) { toast('BMC IP 为空', 'error'); return; }
+    window.open(`https://${ip}`, '_blank');
 }
 
 async function showEditDeviceModal(id) {
@@ -632,11 +644,18 @@ async function showEditDeviceModal(id) {
     document.getElementById('fOsUser').value = d.os_username || '';
     document.getElementById('fOsPass').value = '';
     document.getElementById('fAssetStatus').value = d.asset_status || '';
+    document.getElementById('fAssetDescription').value = d.asset_description || '';
+    toggleAssetDescField();
     document.getElementById('deviceModal').style.display = 'flex';
 }
 
 function closeDeviceModal() {
     document.getElementById('deviceModal').style.display = 'none';
+}
+
+function toggleAssetDescField() {
+    const status = document.getElementById('fAssetStatus').value;
+    document.getElementById('fAssetDescGroup').style.display = status === '整机挂账' ? 'block' : 'none';
 }
 
 async function submitDevice(e) {
@@ -655,6 +674,7 @@ async function submitDevice(e) {
         os_username: document.getElementById('fOsUser').value.trim(),
         os_password: document.getElementById('fOsPass').value,
         asset_status: document.getElementById('fAssetStatus').value,
+        asset_description: document.getElementById('fAssetDescription').value,
     };
 
     const resp = await fetch(id ? `/api/devices/${id}` : '/api/devices', {
