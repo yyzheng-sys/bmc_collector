@@ -381,6 +381,97 @@ def delete_component(component_id):
     return jsonify({'message': '物料已删除'})
 
 
+# ======================== 批量 SN 搜索 ========================
+
+@app.route('/api/search/batch-sn', methods=['POST'])
+def batch_sn_search():
+    """批量 SN 搜索：给定多个 SN，返回每个 SN 所在的设备和物料信息"""
+    data = request.get_json(force=True)
+    sn_list_raw = data.get('sns', [])
+    if isinstance(sn_list_raw, str):
+        # 支持逗号/换行/空格分隔
+        import re as _re
+        sn_list_raw = [s.strip() for s in _re.split(r'[,\n\r;，；\s]+', sn_list_raw) if s.strip()]
+
+    if not sn_list_raw:
+        return jsonify({'error': '请提供至少一个 SN'}), 400
+
+    results = []
+    for sn_input in sn_list_raw:
+        like = f'%{sn_input}%'
+        matched = (
+            db.session.query(Component, Device)
+            .join(Device, Component.device_id == Device.id)
+            .filter(Component.serial_number.ilike(like))
+            .all()
+        )
+        if matched:
+            for comp, dev in matched:
+                results.append({
+                    'search_sn': sn_input,
+                    'device_id': dev.id,
+                    'server_model': dev.server_model,
+                    'server_version': dev.server_version,
+                    'asset_code': dev.asset_code,
+                    'device_sn': dev.sn,
+                    'bmc_ip': dev.bmc_ip,
+                    'component_type': comp.type_label,
+                    'slot': comp.slot,
+                    'manufacturer': comp.manufacturer,
+                    'model': comp.model,
+                    'serial_number': comp.serial_number,
+                    'capacity': comp.capacity,
+                })
+        else:
+            results.append({
+                'search_sn': sn_input,
+                'device_id': '',
+                'server_model': '',
+                'server_version': '',
+                'asset_code': '',
+                'device_sn': '',
+                'bmc_ip': '',
+                'component_type': '',
+                'slot': '',
+                'manufacturer': '',
+                'model': '',
+                'serial_number': '',
+                'capacity': '',
+            })
+
+    return jsonify(results)
+
+
+@app.route('/api/export/batch-sn', methods=['POST'])
+def export_batch_sn():
+    """导出批量 SN 搜索结果为 Excel"""
+    data = request.get_json(force=True)
+    rows = data.get('results', [])
+    if not rows:
+        return jsonify({'error': '无数据可导出'}), 400
+
+    export_rows = []
+    for r in rows:
+        export_rows.append({
+            '搜索SN': r.get('search_sn', ''),
+            '设备ID': r.get('device_id', ''),
+            '服务器机型': r.get('server_model', ''),
+            '服务器版本': r.get('server_version', ''),
+            '资产编码': r.get('asset_code', ''),
+            '设备SN': r.get('device_sn', ''),
+            'BMC IP': r.get('bmc_ip', ''),
+            '物料类型': r.get('component_type', ''),
+            '槽位': r.get('slot', ''),
+            '制造商': r.get('manufacturer', ''),
+            '型号': r.get('model', ''),
+            '物料SN': r.get('serial_number', ''),
+            '容量': r.get('capacity', ''),
+        })
+
+    return _export_excel(export_rows, 'SN搜索结果',
+                         f"SN搜索结果_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+
+
 # ======================== 采集 API ========================
 
 @app.route('/api/collect/<int:device_id>', methods=['POST'])

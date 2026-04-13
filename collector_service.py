@@ -17,11 +17,24 @@ from typing import Dict
 # 用于过滤无效的 Redfish 返回值
 _INVALID_VALUES = {'n/a', 'na', 'null', 'none', 'unknown', 'not specified', '0', ''}
 
+# 匹配 IP 地址或带有 IP 地址片段的字符串（如 "abc90.90.160.27"）
+_IP_LIKE_PATTERN = re.compile(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}')
+
 
 def _sanitize(val) -> str:
     """清洗字段值，将 N/A / null / 0 等无效值转为空字符串"""
     s = str(val).strip() if val is not None else ''
     return '' if s.lower() in _INVALID_VALUES else s
+
+
+def _is_valid_sn(val) -> bool:
+    """判断 SN 是否有效：非空、非无效值、不含 IP 地址"""
+    s = _sanitize(val)
+    if not s:
+        return False
+    if _IP_LIKE_PATTERN.search(s):
+        return False
+    return True
 
 
 def _collect_one(device: Device) -> str:
@@ -55,7 +68,7 @@ def _collect_one(device: Device) -> str:
         _sanitize(fru.get('chassis_serial', '')),
     ]
     for sn_candidate in serial_candidates:
-        if sn_candidate:
+        if _is_valid_sn(sn_candidate):
             device.sn = sn_candidate
             break
 

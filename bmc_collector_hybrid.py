@@ -308,7 +308,8 @@ class BMCHybridCollector:
                         
                         if proc_type_raw == 'GPU' or any(
                                 kw in name_model for kw in
-                                ['GPU', 'NVIDIA', 'TESLA', 'RADEON', 'VGA', 'DISPLAY']):
+                                ['GPU', 'NVIDIA', 'TESLA', 'RADEON', 'VGA', 'DISPLAY',
+                                 'RTX', 'GEFORCE']):
                             proc['processor_type'] = 'gpu'
                         elif proc_type_raw == 'OEM' or any(
                                 kw in name_model for kw in
@@ -355,10 +356,12 @@ class BMCHybridCollector:
                         continue
                     d = dev_resp.json()
                     name = (d.get('Name', '') + d.get('Model', '')
-                            + d.get('DeviceType', '')).upper()
+                            + d.get('DeviceType', '')
+                            + d.get('Manufacturer', '')).upper()
                     is_gpu = any(kw in name for kw in
                                  ['GPU', 'NVIDIA', 'TESLA', 'RADEON',
-                                  'ACCELERAT', 'VGA', 'DISPLAY'])
+                                  'ACCELERAT', 'VGA', 'DISPLAY',
+                                  'RTX', 'GEFORCE'])
                     is_npu = any(kw in name for kw in
                                  ['NPU', 'ASCEND', 'DAVINCI'])
                     if not is_gpu and not is_npu:
@@ -372,6 +375,36 @@ class BMCHybridCollector:
                                       or v.get('SN', ''))
                                 if sn:
                                     break
+                    # 尝试从 PCIeFunctions 获取 SN
+                    if not sn:
+                        funcs_link = d.get('PCIeFunctions', {}).get('@odata.id', '')
+                        if funcs_link:
+                            try:
+                                funcs_resp = self.session.get(
+                                    f"{self.base_url}{funcs_link}", timeout=30)
+                                if funcs_resp.status_code == 200:
+                                    for fm in funcs_resp.json().get('Members', []):
+                                        func_url = fm.get('@odata.id', '')
+                                        if not func_url:
+                                            continue
+                                        fr = self.session.get(
+                                            f"{self.base_url}{func_url}", timeout=30)
+                                        if fr.status_code != 200:
+                                            continue
+                                        fd = fr.json()
+                                        sn = fd.get('SerialNumber', '')
+                                        if not sn:
+                                            foem = fd.get('Oem', {})
+                                            for fv in foem.values():
+                                                if isinstance(fv, dict):
+                                                    sn = (fv.get('SerialNumber', '')
+                                                          or fv.get('SN', ''))
+                                                    if sn:
+                                                        break
+                                        if sn:
+                                            break
+                            except Exception:
+                                pass
                     gpu_list.append({
                         'manufacturer': d.get('Manufacturer', ''),
                         'type': d.get('Model', d.get('Name', '')),
@@ -615,11 +648,39 @@ class BMCHybridCollector:
         try:
             processors = self.get_processor_info()
             
-            # 补充: 仅当 Processors 端点未采集到 GPU/NPU 时，才从 PCIeDevices 扫描
-            gpu_npu_from_proc = [p for p in processors if p.get('processor_type') in ('gpu', 'npu')]
-            if not gpu_npu_from_proc:
-                pcie_gpus = self.get_pcie_gpu_info()
-                processors.extend(pcie_gpus)
+            # 始终扫描 PCIeDevices 补充 GPU/NPU，然后按 SN+槽位 去重合并
+            pcie_gpus = self.get_pcie_gpu_info()
+            if pcie_gpus:
+                # 去重: 以 (serial, slot) 或 (serial,) 为键
+                existing_keys = set()
+                for p in processors:
+                    if p.get('processor_type') in ('gpu', 'npu'):
+                        sn = (p.get('serial', '') or '').strip()
+                        slot = (p.get('slot', '') or '').strip()
+                        if sn:
+                            existing_keys.add(sn)
+                        if slot:
+                            existing_keys.add(slot)
+                for pg in pcie_gpus:
+                    sn = (pg.get('serial', '') or '').strip()
+                    slot = (pg.get('slot', '') or '').strip()
+                    # 如果 SN 和 slot 都不在已有集合中，认为是新设备
+                    if (not sn or sn not in existing_keys) and (not slot or slot not in existing_keys):
+                        processors.append(pg)
+                        if sn:
+                            existing_keys.add(sn)
+                        if slot:
+                            existing_keys.add(slot)
+                    elif sn and not any(
+                            p.get('serial') for p in processors
+                            if p.get('processor_type') in ('gpu', 'npu') and p.get('slot', '').strip() == slot):
+                        # Processor 端点有该槽位但无 SN，用 PCIe 的 SN 补充
+                        for p in processors:
+                            if (p.get('processor_type') in ('gpu', 'npu')
+                                    and p.get('slot', '').strip() == slot
+                                    and not p.get('serial')):
+                                p['serial'] = sn
+                                break
             
             info = {
                 'ip': self.ip,

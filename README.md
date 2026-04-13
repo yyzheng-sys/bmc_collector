@@ -170,7 +170,37 @@ server_model,server_version,asset_code,sn,bmc_ip,bmc_username,bmc_password,os_ip
 
 ---
 
-## 9. 安全与 Git 提交建议
+## 9. 从 Git 仓库升级
+
+当代码有更新时，可在部署目录执行以下操作完成升级：
+
+```bash
+# 1. 进入项目目录
+cd /path/to/bmc_collector
+
+# 2. 拉取最新代码
+git pull origin main
+
+# 3. 安装/更新依赖（如有新增依赖）
+pip install -r requirements.txt
+
+# 4. 重启服务
+# 如果使用 systemd 管理:
+sudo systemctl restart bmc_collector
+
+# 如果是前台运行，先 Ctrl+C 停止旧进程，再启动:
+python app.py
+```
+
+说明：
+
+- 升级前无需手动迁移数据库，启动时会自动执行轻量迁移
+- SQLite 数据库文件（`bmc_platform.db`）和加密密钥（`.encryption_key`）已在 .gitignore 中忽略，`git pull` 不会覆盖本地数据
+- 如有本地修改冲突，可先执行 `git stash` 暂存，拉取后再 `git stash pop` 恢复
+
+---
+
+## 10. 安全与 Git 提交建议
 
 已在 .gitignore 中忽略以下敏感或运行时文件：
 
@@ -186,7 +216,7 @@ server_model,server_version,asset_code,sn,bmc_ip,bmc_username,bmc_password,os_ip
 
 ---
 
-## 10. 常见问题
+## 11. 常见问题
 
 1. BMC 可连通但采集为空
    - 检查设备是否开启对应 Redfish 资源

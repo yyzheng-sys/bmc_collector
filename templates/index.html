@@ -21,6 +21,7 @@
         <button class="btn" onclick="showBatchAddModal()">批量新增</button>
         <button class="btn btn-danger" onclick="batchDeleteDevices()">批量删除</button>
         <button class="btn btn-success" onclick="collectAll()">全量采集</button>
+        <button class="btn" onclick="showBatchSnSearchModal()" style="background:#7c3aed;color:#fff;border-color:#7c3aed;">SN批量搜索</button>
         <div class="dropdown">
             <button class="btn btn-info">导出</button>
             <div class="dropdown-content">
@@ -169,6 +170,44 @@
             </form>
         </div>
     </div>
+    <div class="modal-overlay" id="batchSnModal" style="display:none;" onclick="if(event.target===this)closeBatchSnModal()">
+        <div class="modal modal-xl">
+            <div class="modal-header">
+                <h3>SN 批量搜索 <span id="batchSnCount" class="badge">0</span></h3>
+                <div class="inline-actions">
+                    <button class="btn btn-sm btn-info" onclick="exportBatchSnResults()">导出搜索结果</button>
+                    <button class="btn-close" onclick="closeBatchSnModal()">✕</button>
+                </div>
+            </div>
+            <div style="margin-bottom:10px;">
+                <textarea id="batchSnInput" rows="4" style="width:100%;resize:vertical;border:1px solid #cbd5e1;border-radius:8px;padding:8px;font-size:13px;" placeholder="输入多个物料SN，支持逗号、分号、换行分隔"></textarea>
+                <button class="btn btn-primary" style="margin-top:6px;" onclick="submitBatchSnSearch()">搜索</button>
+            </div>
+            <div class="table-wrap">
+                <table class="data-table" id="batchSnTable">
+                    <thead>
+                        <tr>
+                            <th>搜索SN</th>
+                            <th>机型</th>
+                            <th>版本</th>
+                            <th>资产编码</th>
+                            <th>设备SN</th>
+                            <th>BMC IP</th>
+                            <th>物料类型</th>
+                            <th>槽位</th>
+                            <th>制造商</th>
+                            <th>型号</th>
+                            <th>物料SN</th>
+                            <th>容量</th>
+                        </tr>
+                    </thead>
+                    <tbody id="batchSnTableBody">
+                        <tr><td colspan="12" class="empty-msg">请输入SN后点击搜索</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 </main>
 
 <div id="toast" class="toast" style="display:none;"></div>
@@ -310,7 +349,7 @@ function renderDeviceTable() {
                         <option value="整机挂账" ${d.asset_status === '整机挂账' ? 'selected' : ''}>整机挂账</option>
                         <option value="整机转散件" ${d.asset_status === '整机转散件' ? 'selected' : ''}>整机转散件</option>
                         <option value="散件挂账" ${d.asset_status === '散件挂账' ? 'selected' : ''}>散件挂账</option>
-                    </select>${d.asset_status === '整机挂账' && d.asset_description ? `<div class="asset-desc-preview" title="${esc(d.asset_description)}">${esc(d.asset_description).substring(0, 30)}${d.asset_description.length > 30 ? '...' : ''}</div>` : ''}
+                    </select>${d.asset_status === '整机挂账' && d.asset_description ? `<div class="asset-desc-preview">${esc(d.asset_description)}</div>` : ''}
                 </td>
                 <td><span class="status ${d.status}">${statusLabel(d.status)}</span></td>
                 <td>${d.component_count || 0}</td>
@@ -739,6 +778,88 @@ document.getElementById('searchInput').addEventListener('input', function() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => loadDevices(this.value.trim()), 260);
 });
+
+let batchSnResults = [];
+
+function showBatchSnSearchModal() {
+    document.getElementById('batchSnInput').value = '';
+    document.getElementById('batchSnTableBody').innerHTML = '<tr><td colspan="12" class="empty-msg">请输入SN后点击搜索</td></tr>';
+    document.getElementById('batchSnCount').textContent = '0';
+    batchSnResults = [];
+    document.getElementById('batchSnModal').style.display = 'flex';
+}
+
+function closeBatchSnModal() {
+    document.getElementById('batchSnModal').style.display = 'none';
+}
+
+async function submitBatchSnSearch() {
+    const text = document.getElementById('batchSnInput').value.trim();
+    if (!text) {
+        toast('请输入至少一个SN', 'error');
+        return;
+    }
+    const resp = await fetch('/api/search/batch-sn', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({sns: text}),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+        toast(data.error || '搜索失败', 'error');
+        return;
+    }
+    batchSnResults = data;
+    document.getElementById('batchSnCount').textContent = data.length;
+    const tbody = document.getElementById('batchSnTableBody');
+    if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="12" class="empty-msg">无匹配结果</td></tr>';
+        return;
+    }
+    tbody.innerHTML = data.map(r => `
+        <tr class="${r.bmc_ip ? '' : 'not-found-row'}">
+            <td>${esc(r.search_sn)}</td>
+            <td>${esc(r.server_model)}</td>
+            <td>${esc(r.server_version)}</td>
+            <td>${esc(r.asset_code)}</td>
+            <td>${esc(r.device_sn)}</td>
+            <td>${esc(r.bmc_ip)}</td>
+            <td>${esc(r.component_type)}</td>
+            <td>${esc(r.slot)}</td>
+            <td>${esc(r.manufacturer)}</td>
+            <td>${esc(r.model)}</td>
+            <td class="sn-cell">${esc(r.serial_number)}</td>
+            <td>${esc(r.capacity)}</td>
+        </tr>
+    `).join('');
+}
+
+async function exportBatchSnResults() {
+    if (!batchSnResults.length) {
+        toast('暂无搜索结果可导出', 'error');
+        return;
+    }
+    const resp = await fetch('/api/export/batch-sn', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({results: batchSnResults}),
+    });
+    if (!resp.ok) {
+        toast('导出失败', 'error');
+        return;
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const match = cd.match(/filename=(.+)/);
+    a.download = match ? match[1] : 'SN搜索结果.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
 
 loadDevices();
 setInterval(() => loadDevices(document.getElementById('searchInput').value.trim()), 30000);
