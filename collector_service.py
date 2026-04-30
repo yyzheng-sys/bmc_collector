@@ -10,7 +10,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from models import db, Device, Component
-from bmc_collector_hybrid import BMCHybridCollector, get_os_ip_from_bmc
+from bmc_collector_hybrid import BMCHybridCollector
 from os_collector import OSCollector
 from typing import Dict
 
@@ -189,14 +189,9 @@ def _collect_one(device: Device) -> str:
 
 def _collect_via_os(ip: str, username: str, password: str) -> Dict:
     """SSH 到操作系统采集硬件信息"""
-
-    from bmc_collector_hybrid import get_os_ip_from_bmc
-    os_ip = get_os_ip_from_bmc(ip, username, password)
-
     oc = OSCollector(ip, username, password)
-    result = oc.collect_all()
-    result['os_ip'] = os_ip
-    return result
+    return oc.collect_all()
+
 
 
 

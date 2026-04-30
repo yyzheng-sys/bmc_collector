@@ -867,28 +867,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-def get_os_ip_from_bmc(bmc_ip, username, password):
-    import requests
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-    session = requests.Session()
-    session.auth = (username, password)
-
-    try:
-        url = f"https://{bmc_ip}/redfish/v1/Systems/1/EthernetInterfaces"
-        response = session.get(url, verify=False, timeout=10)
-        data = response.json()
-
-        os_ips = []
-        for member in data.get("Members", []):
-            iface_url = member["@odata.id"]
-            iface = session.get(f"https://{bmc_ip}{iface_url}", verify=False).json()
-            for ipv4 in iface.get("IPv4Addresses", []):
-                ip = ipv4.get("Address")
-                if ip and ip != bmc_ip:
-                    os_ips.append(ip)
-        return os_ips[0] if os_ips else None
-    except:
-        return None
